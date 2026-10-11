@@ -1,0 +1,396 @@
+###############################################################################
+#  BATTLE DONGS - POWER LIST
+#
+#  Every [Section] below is one power. The name in the brackets is what players
+#  see. Edit numbers, rename things, delete things, copy-paste to make new ones.
+#  The server re-reads this file at the start of every game - no restart needed.
+#  Lines starting with # are comments.
+#
+#  ---------------------------------------------------------------------------
+#  KEYS (all optional except type - anything missing uses the default)
+#  ---------------------------------------------------------------------------
+#  type         what it does - see TYPES below                   (default shot)
+#  damage       points scored on a direct hit                    (default 30)
+#  radius       explosion size in pixels (field is 640 wide)     (default 16)
+#  count        how many: shots, splits, fragments, bounces, hops, bombs...
+#  spread       degrees between shots / fan width for splits and fragments
+#  delay        seconds between shots for "stream"               (default 0.15)
+#  jitter       random wobble in angle/power for "stream"        (default 0)
+#  reach        pixels: roll distance, dig depth, fire flow, seek range,
+#               air strike half-width                            (default 100)
+#  speed        launch speed multiplier, 1 = normal              (default 1)
+#  gravity      gravity multiplier, 0 = flies dead straight      (default 1)
+#  frag_damage  damage of each fragment / bomblet / bounce pop   (default 10)
+#  frag_radius  explosion size of each fragment                  (default 8)
+#  frag_speed   how hard fragments get thrown / hop height       (default 150)
+#  carve        yes/no - does the explosion dig into the ground  (default yes)
+#  shape        dirt only: ball or wall                          (default ball)
+#  height       dirt walls only: wall height in pixels           (default 40)
+#  weight       how often it shows up in the draft, 0 = disabled (default 1)
+#  color        projectile + explosion color, like #ffd84a
+#  look         glob, ball, drop, pearl, rocket, dirt or probe   (default glob)
+#  size         projectile size in pixels                        (default 3)
+#  description  the text players see
+#
+#  ---------------------------------------------------------------------------
+#  TYPES
+#  ---------------------------------------------------------------------------
+#  shot        one projectile, explodes on impact
+#  spread      "count" projectiles fanned out "spread" degrees apart
+#  stream      "count" projectiles fired one after another, "delay" apart
+#  split       one projectile that splits into "count" at the top of its arc
+#  cluster     explodes, then throws "count" fragments upward ("spread" = cone)
+#  roller      lands, then rolls downhill up to "reach" px or until it hits
+#              a wall or a tank, then explodes
+#  bouncer     bounces "count" times (a small frag pop each bounce), then explodes
+#  jackhammer  explodes, hops back up, explodes again - "count" hops
+#  digger      burrows "reach" px into the ground (radius = tunnel width);
+#              if damage > 0 it explodes at the end using frag_radius
+#  dirt        adds dirt instead of removing it: a ball, or a wall
+#  napalm      liquid fire that flows downhill up to "reach" px each way;
+#              tanks take "damage" per flame within "radius"
+#  seeker      steers toward the nearest enemy within "reach" px
+#  airstrike   marks the spot, then "count" bombs fall from the sky across
+#              "reach" px either side
+#  teleport    moves YOUR tank to wherever it lands. No damage.
+#
+#  SCORING: you get points for every point of damage you deal.
+#  Hitting yourself SUBTRACTS the damage from your own score.
+###############################################################################
+
+
+# ============================== BASIC LOADS =================================
+
+[Single Squirt]
+type = shot
+damage = 30
+radius = 14
+weight = 3
+color = #fffbe8
+description = One honest load. Point, shoot, hope.
+
+[Big Load]
+type = shot
+damage = 45
+radius = 22
+size = 4
+weight = 2
+color = #fffbe8
+description = Been saving this one up all week.
+
+[Money Shot]
+type = shot
+damage = 60
+radius = 12
+size = 4
+weight = 1
+color = #ffd84a
+description = Huge damage, tiny splash. Only pays off if you nail it.
+
+[Moby Dick]
+type = shot
+damage = 75
+radius = 44
+size = 6
+weight = 1
+color = #f0f8ff
+description = The great white whale of loads. Leaves a crater you could live in.
+
+[Viagra Rocket]
+type = shot
+damage = 40
+radius = 16
+speed = 1.5
+look = rocket
+color = #5a9bff
+description = Launches 50% harder. Call a doctor if it lasts more than 4 hours.
+
+[Long Distance Relationship]
+type = shot
+damage = 35
+radius = 10
+speed = 2.0
+gravity = 0.2
+look = rocket
+color = #ff5a7a
+description = Flies almost dead straight - barely any drop, no commitment. A sniper.
+
+[Glory Hole]
+type = shot
+damage = 12
+radius = 50
+color = #a87a4a
+description = Blows a massive hole. Barely tickles, but they'll be sitting in a pit.
+
+
+# ============================== MULTI-SHOTS =================================
+
+[Three-Way]
+type = spread
+count = 3
+spread = 5
+damage = 25
+radius = 12
+color = #fffbe8
+description = Three loads, one target, zero shame.
+
+[Five-Some]
+type = spread
+count = 5
+spread = 4
+damage = 20
+radius = 11
+color = #ffe8f0
+description = Five at once. Someone's getting hit.
+
+[Gangbang]
+type = spread
+count = 9
+spread = 3
+damage = 12
+radius = 9
+size = 2
+color = #fffbe8
+description = Everybody gets a turn.
+
+[Two Pump Chump]
+type = stream
+count = 2
+delay = 0.3
+damage = 30
+radius = 14
+jitter = 1
+color = #fffbe8
+description = Pump, pump... done. Sorry about that.
+
+[Premature Pumps]
+type = stream
+count = 6
+delay = 0.12
+jitter = 2.5
+damage = 12
+radius = 9
+size = 2
+color = #fffbe8
+description = Couldn't hold it in. Rapid fire, sloppy aim.
+
+[Pearl Necklace]
+type = spread
+count = 7
+spread = 2
+damage = 14
+radius = 8
+look = pearl
+color = #f8f4ff
+description = A tight string of pearls. Wrap it around their neck.
+
+[Triple Penetration]
+type = split
+count = 3
+spread = 8
+damage = 28
+radius = 13
+color = #ff7af2
+description = Splits into three at the top of the arc. Something for every hole.
+
+[Daisy Chain]
+type = split
+count = 6
+spread = 5
+damage = 16
+radius = 10
+color = #ffd84a
+description = Splits into six at the top of the arc and rains down in a line.
+
+
+# ============================== SPECIALTY ===================================
+
+[Golden Shower]
+type = airstrike
+count = 10
+reach = 45
+frag_damage = 9
+frag_radius = 8
+look = drop
+color = #ffd84a
+description = Marks the spot, then the sky opens up. Bring a poncho.
+
+[Bukkake Barrage]
+type = airstrike
+count = 6
+reach = 60
+frag_damage = 16
+frag_radius = 12
+color = #fffbe8
+description = Six volunteers drop in from above. Messy.
+
+[Burning Sensation]
+type = napalm
+damage = 6
+radius = 7
+reach = 70
+look = drop
+color = #ff7a1f
+description = It burns when you pee. Now it burns for them too. Flows downhill.
+
+[Chlamydia Creep]
+type = napalm
+damage = 4
+radius = 6
+reach = 130
+look = drop
+color = #8aef4a
+description = Slow, green, spreads everywhere. Nobody notices until it's too late.
+
+[Herpes Cluster]
+type = cluster
+damage = 20
+radius = 12
+count = 6
+spread = 45
+frag_speed = 140
+frag_damage = 10
+frag_radius = 9
+color = #ff7af2
+description = A boom, then little outbreaks everywhere. It never really goes away.
+
+[Hot Mess]
+type = cluster
+damage = 15
+radius = 12
+count = 10
+spread = 18
+frag_speed = 230
+frag_damage = 8
+frag_radius = 8
+color = #ff5a2a
+description = An erupting volcano of bad decisions. Shoots straight up, rains down.
+
+[Crabs]
+type = cluster
+damage = 8
+radius = 8
+count = 12
+spread = 70
+frag_speed = 90
+frag_damage = 5
+frag_radius = 6
+size = 2
+color = #ff5a4a
+description = Splits into a dozen itchy little bastards that scatter everywhere.
+
+[Blue Balls]
+type = roller
+damage = 40
+radius = 18
+reach = 220
+look = ball
+size = 4
+color = #5a9bff
+description = Rolls downhill looking for relief. Explodes when it finds some.
+
+[Ball Buster]
+type = roller
+damage = 60
+radius = 26
+reach = 150
+look = ball
+size = 5
+color = #e89a8a
+description = A bigger, angrier nut. Rolls until it hits something it hates.
+
+[Bouncing Boobies]
+type = bouncer
+count = 4
+damage = 35
+radius = 16
+frag_damage = 8
+frag_radius = 8
+look = pearl
+size = 4
+color = #ffc8d0
+description = Bouncy bouncy. A little pop on every bounce, a big pop at the end.
+
+[Pound Town]
+type = jackhammer
+count = 4
+damage = 16
+radius = 12
+frag_speed = 120
+color = #ff9a1f
+description = Hammers the same spot over and over and over and over...
+
+[Teabagger]
+type = jackhammer
+count = 2
+damage = 28
+radius = 16
+frag_speed = 80
+look = ball
+size = 4
+color = #e89a8a
+description = Dips its balls on the target. Twice. Incredibly rude.
+
+[Heat-Seeking Missionary]
+type = seeker
+damage = 40
+radius = 16
+reach = 150
+look = rocket
+color = #ff9a1f
+description = Missionary position: locks on and goes straight for them.
+
+[Anal Probe]
+type = digger
+damage = 0
+reach = 80
+radius = 6
+look = probe
+color = #c8d4e0
+description = Burrows deep without hurting anyone. Undermines the ground so they sink.
+
+[Deep Throat]
+type = digger
+damage = 50
+reach = 55
+radius = 5
+frag_radius = 26
+look = probe
+color = #ff7a94
+description = Goes all the way down, then blows. Great against dicks hiding behind hills.
+
+
+# ============================== DIRT & UTILITY ==============================
+
+[Dirty Sanchez]
+type = dirt
+shape = ball
+radius = 28
+look = dirt
+color = #7a4e2a
+description = A huge ball of dirt. Bury them alive. Gross.
+
+[Cock Block]
+type = dirt
+shape = wall
+radius = 7
+height = 70
+look = dirt
+color = #7a4e2a
+description = Throws up a dirt wall. Nobody's getting through this.
+
+[Morning Wood]
+type = dirt
+shape = wall
+radius = 3
+height = 120
+look = dirt
+color = #b07c48
+description = A tall skinny tower pops up out of nowhere. Awkward.
+
+[Walk of Shame]
+type = teleport
+look = pearl
+color = #c87aff
+weight = 1
+description = Teleports YOU to wherever it lands. Grab your pants on the way.

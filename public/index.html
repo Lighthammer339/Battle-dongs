@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BATTLE DONGS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Luckiest+Guy&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="screen" width="640" height="300"></canvas>
+
+<div id="ui">
+  <!-- MAIN MENU -->
+  <section id="menu" class="screen">
+    <h1 class="logo"><span>BATTLE DONGS</span></h1>
+    <p class="tagline">~ POCKET TANKS FOR YOUR POCKET ROCKET ~</p>
+    <div class="panel narrow">
+      <label for="nick">NICKNAME</label>
+      <input id="nick" maxlength="14" placeholder="Big Dick Energy" autocomplete="off">
+      <button id="btnPlay" class="big">PLAY ONLINE</button>
+      <button id="btnHow">HOW TO PLAY</button>
+      <button id="btnMusic">MUSIC: ON</button>
+    </div>
+    <p class="foot">(C) 2026 UNCIRCUMCISED SOFTWARE &middot; ARMORED, AROUSED &amp; READY</p>
+  </section>
+
+  <!-- HOW TO PLAY -->
+  <section id="how" class="screen" hidden>
+    <div class="panel wide">
+      <h2>HOW TO PLAY</h2>
+      <ul class="rules">
+        <li><b class="c-yel">THE DRAFT:</b> before the fight everyone takes turns picking powers from a shared pool. Pick smart &mdash; what you don't take, they get.</li>
+        <li><b class="c-cyan">YOUR TURN:</b> set the <b>ANGLE</b> and <b>POWER</b> of your dong, pick a power, and hit <b>FIRE</b>. Gravity does the rest. No wind, no excuses.</li>
+        <li><b class="c-pink">SCORE:</b> every point of damage you deal is a point for you. Hit yourself and you <b>lose</b> those points.</li>
+        <li><b class="c-org">THE GROUND</b> gets blown apart and collapses. Dig them into pits, bury them in dirt, or drop the ground out from under them.</li>
+        <li><b class="c-green">MOVES:</b> you get 4 moves per game to drive your tank left or right. Use them wisely.</li>
+        <li>The game ends when everyone's out of powers. Highest score wins.</li>
+      </ul>
+      <h3>CONTROLS</h3>
+      <p class="controls">LEFT / RIGHT = angle (hold SHIFT for x5) &middot; UP / DOWN = power<br>
+        W / S = switch power &middot; SPACE or ENTER = FIRE<br>
+        Or click &amp; drag anywhere on the field to aim &middot; M = music</p>
+      <p class="controls">Every power and what it does lives in <b class="c-yel">powers.txt</b> next to the server &mdash; edit it to make your own.</p>
+      <button class="back">BACK</button>
+    </div>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="lobby" class="screen" hidden>
+    <div class="cols">
+      <div class="panel">
+        <h2>OPEN ROOMS</h2>
+        <div id="roomList" class="list"></div>
+        <div class="row">
+          <input id="joinCode" maxlength="4" placeholder="CODE" class="code">
+          <button id="btnJoin">JOIN</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>CREATE ROOM</h2>
+        <label for="roomName">ROOM NAME</label>
+        <input id="roomName" maxlength="20" autocomplete="off">
+        <label class="check"><input type="checkbox" id="roomPublic" checked> LIST PUBLICLY</label>
+        <button id="btnCreate" class="big">CREATE</button>
+      </div>
+    </div>
+    <button class="back">MAIN MENU</button>
+  </section>
+
+  <!-- ROOM -->
+  <section id="room" class="screen" hidden>
+    <div class="cols">
+      <div class="panel">
+        <h2 id="roomTitle">ROOM</h2>
+        <p class="codeline">CODE: <span id="roomCode" class="bigcode">----</span></p>
+        <div id="playerList" class="list"></div>
+        <button id="btnBot" class="hostonly">+ ADD BOT</button>
+        <label>TURN TIME</label>
+        <div class="seg" id="turnSeg">
+          <button data-v="30">30s</button><button data-v="60">60s</button><button data-v="90">90s</button>
+        </div>
+        <label>POWERS EACH</label>
+        <div class="seg" id="weaponSeg">
+          <button data-v="5">5</button><button data-v="10">10</button><button data-v="15">15</button>
+        </div>
+        <label>HOW YOU GET THEM</label>
+        <div class="seg" id="draftSeg">
+          <button data-v="1">DRAFT</button><button data-v="0">RANDOM DEAL</button>
+        </div>
+        <button id="btnStart" class="big hostonly">START GAME</button>
+        <p class="guestonly small blink">WAITING FOR HOST...</p>
+        <button id="btnLeave">LEAVE ROOM</button>
+      </div>
+      <div class="panel">
+        <h2>CHAT</h2>
+        <div id="chatLog" class="chat"></div>
+        <form id="chatForm" class="row">
+          <input id="chatInput" maxlength="120" autocomplete="off" placeholder="talk dirty...">
+          <button>SAY</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- DRAFT -->
+  <section id="draft" class="screen" hidden>
+    <div class="panel wide draftpanel">
+      <h2>PICK YOUR POISON</h2>
+      <p id="draftInfo" class="draftinfo"></p>
+      <div id="draftGrid" class="draftgrid"></div>
+      <div id="draftHands" class="hands"></div>
+    </div>
+  </section>
+
+  <!-- GAME OVER -->
+  <section id="over" class="screen" hidden>
+    <div class="panel narrow">
+      <h2 id="overTitle">GAME OVER</h2>
+      <ol id="ranking"></ol>
+      <button id="btnBackRoom" class="big">BACK TO ROOM</button>
+    </div>
+  </section>
+
+  <!-- IN-GAME CONTROL PANEL -->
+  <div id="hud" hidden>
+    <div id="scores"></div>
+    <div class="ctl">
+      <div class="weapon">
+        <button id="wPrev" class="arrow">&lt;</button>
+        <button id="wName" class="wname" title="Click for your full list"><b>---</b><small></small></button>
+        <button id="wNext" class="arrow">&gt;</button>
+      </div>
+      <div class="dials">
+        <div class="dial"><label>ANGLE</label><div class="row">
+          <button class="arrow" data-adj="angle" data-d="1">&lt;</button><span id="angVal">45</span><button class="arrow" data-adj="angle" data-d="-1">&gt;</button>
+        </div></div>
+        <div class="dial"><label>POWER</label><div class="row">
+          <button class="arrow" data-adj="power" data-d="-1">-</button><span id="powVal">60</span><button class="arrow" data-adj="power" data-d="1">+</button>
+        </div></div>
+        <div class="dial"><label id="moveLbl">MOVES 4</label><div class="row">
+          <button class="arrow" id="moveL">&lt;</button><span class="tank">&#9632;</span><button class="arrow" id="moveR">&gt;</button>
+        </div></div>
+        <button id="btnFire" class="fire">FIRE!</button>
+      </div>
+      <p id="wDesc" class="wdesc"></p>
+    </div>
+    <div id="turnBox">
+      <div id="turnWho"></div>
+      <div id="turnTime"></div>
+    </div>
+    <div id="wList" hidden></div>
+  </div>
+
+  <div id="toast" hidden></div>
+  <button id="muteBtn" title="Music on/off">&#9835;</button>
+</div>
+
+<script src="audio.js"></script>
+<script src="sprites.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
