@@ -190,6 +190,7 @@ const Sound = (() => {
     pickup() { [72, 76, 79, 84].forEach((m, i) => tone(now() + i * 0.05, hz(m + 12), 0.08, { wave: 'p25', gain: 0.15 })); },
     death() { tone(now(), 600, 0.9, { wave: 'sawtooth', slide: 40, gain: 0.22, vib: true, lp: 1800 }); },
     tick() { tone(now(), 1500, 0.03, { wave: 'p50', gain: 0.08 }); },
+    rev(k = 0) { tone(now(), 180 + k * 9, 0.06, { wave: 'p25', slide: 220 + k * 10, gain: 0.07 + k * 0.0008 }); },
     turn() { tone(now(), hz(81), 0.06, { wave: 'p25', gain: 0.1 }); tone(now() + 0.07, hz(88), 0.08, { wave: 'p25', gain: 0.1 }); },
     crumble() { noise(now(), 0.9, { type: 'lowpass', freq: 600, sweep: 60, gain: 0.6 }); tone(now(), 80, 0.8, { wave: 'sawtooth', slide: 30, gain: 0.2, lp: 300 }); },
     clang() { [1800, 2400, 3100].forEach(f => tone(now(), f, 0.35, { wave: 'p12', slide: f * 0.97, gain: 0.08 })); noise(now(), 0.1, { freq: 5000, gain: 0.2 }); },

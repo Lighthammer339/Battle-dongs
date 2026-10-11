@@ -127,7 +127,7 @@ button.big { font-size: 14px; padding: 14px; }
 .rules li { margin-bottom: 6px; }
 .rules.powers { font-size: 9px; }
 .controls { font-size: 9px; line-height: 2; color: #e0c090; margin: 0; }
-.c-cyan { color: #7ff7ff; } .c-pink { color: #ff7af2; } .c-yel { color: #ffd84a; } .c-org { color: #ff9a1f; }
+.c-red { color: #ff5a4a; } .c-cyan { color: #7ff7ff; } .c-pink { color: #ff7af2; } .c-yel { color: #ffd84a; } .c-org { color: #ff9a1f; }
 .c-green { color: #8aef4a; } .c-white { color: #fffbe8; } .c-blue { color: #5a9bff; } .c-lube { color: #c8eaff; }
 b { text-shadow: 1px 1px 0 #1a0b10; }
 
@@ -209,6 +209,10 @@ b { text-shadow: 1px 1px 0 #1a0b10; }
 .dial label { font-size: 7px; }
 .dial span { min-width: 34px; text-align: center; font-size: 11px; color: #fffbe8; text-shadow: 2px 2px 0 #1a0b10; }
 .dial .tank { min-width: 14px; color: #c8a070; }
+.meter { position: relative; width: 110px; height: 22px; background: #1c0f12; border: 3px solid; border-color: #2a1408 #7a4e2a #7a4e2a #2a1408; box-shadow: 0 0 0 2px #1a0b10; }
+.meter #powBar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(90deg, #ffd84a, #ff9a1f 55%, #ff3a2a); }
+.meter #powLast { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: #fffbe8; box-shadow: 0 0 0 1px #1a0b10; }
+.meter span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; }
 button.fire {
   font-size: 15px; padding: 10px 20px; color: #fff4e0; text-shadow: 2px 2px 0 #6a0a10;
   background: linear-gradient(#ff9a7a, #e8433a 50%, #9c1f2a); border-color: #ffc8b0 #5a0a10 #5a0a10 #ffc8b0;

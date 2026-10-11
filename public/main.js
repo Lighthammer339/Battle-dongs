@@ -3,7 +3,10 @@
 const $ = s => document.querySelector(s);
 const cv = $('#screen'), g = cv.getContext('2d');
 const WW = 640, WH = 300;          // world size in pixels (same as server.py)
-const PHYS = { g: 200, vmax: 410, pivot: 12, barrel: 14 };
+const RES = 2;                     // canvas pixels per world pixel (tanks use the extra detail)
+cv.width = WW * RES; cv.height = WH * RES;
+const PHYS = { g: 200, vmax: 410, pivot: 12, barrel: 14, aimMin: -45, aimMax: 225, charge: 1.6 };
+const CROSS_D = 44;                // crosshair distance from the pivot, world px
 const SDT = 4 / 120;               // time between recorded path points (server SAMPLE * DT)
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -262,10 +265,11 @@ function startGame(m) {
     world, players: new Map(), order: m.players.map(p => p.id),
     powers: new Map(m.powers.map(p => [p.name, p])),
     phase: 'draft', cur: null, deadline: 0, turnN: 0, replay: null, draft: null,
-    w: 0, banner: null, lastAimSent: 0, aimTimer: null,
+    w: 0, banner: null, lastAimSent: 0, aimTimer: null, hpMax: m.hp || 250, face: 1,
   };
   for (const p of m.players) {
-    const t = { ...p, x: 0, y: 0, dx: 0, dy: 0, da: 45, angle: 45, power: 60, w: 0, score: 0, moves: 4, inv: [], gone: false, flash: 0, roll: 0 };
+    const t = { ...p, x: 0, y: 0, dx: 0, dy: 0, da: 45, angle: 45, power: 60, w: 0, score: 0, taken: 0, moves: 4, inv: [], gone: false,
+                flash: 0, roll: 0, wood: 1, recoil: 0, charging: false, chargeT0: 0, lastPow: null };
     G.players.set(p.id, t);
     world.tanks.push(t);
   }
@@ -282,7 +286,7 @@ function applyState(s, snap) {
     const p = G.players.get(t.id);
     if (!p) continue;
     const keepAim = p.id === App.myId && myTurn();
-    Object.assign(p, { x: t.x, y: t.y, score: t.score, moves: t.moves, inv: t.inv, gone: t.gone });
+    Object.assign(p, { x: t.x, y: t.y, score: t.score, taken: t.taken || 0, moves: t.moves, inv: t.inv, gone: t.gone });
     if (!keepAim) { p.angle = t.angle; p.power = t.power; }
     if (snap) { p.dx = t.x; p.dy = t.y; p.da = t.angle; }
   }
@@ -366,6 +370,7 @@ function openPause() {
   if (App.screen === 'bye') return;
   $('#pause').hidden = false;
   $('#wList').hidden = true;
+  stopCharge();
   dragging = false;
   $('#btnToMenu').hidden = App.screen === 'menu';
   $('#btnResume').textContent = pausable() ? 'RESUME' : 'BACK';
@@ -423,10 +428,13 @@ function onTurn(m) {
   G.phase = 'aim'; G.cur = m.id; G.turnN = m.n;
   G.deadline = now() + m.ms;
   applyState(m.state, false);
+  stopCharge();
+  for (const q of G.players.values()) q.charging = false;
   if (App.screen !== 'game' && App.screen !== 'over') show('game');
   const p = G.players.get(m.id);
   if (m.id === App.myId) {
     G.w = clamp(G.w, 0, Math.max(0, p.inv.length - 1));
+    G.face = p.angle > 90 ? -1 : p.angle < 90 ? 1 : (p.x < WW / 2 ? 1 : -1);
     banner('YOUR TURN!', 1500, css(p));
     Sound.sfx('turn');
     sendAim(true);
@@ -439,6 +447,7 @@ function onAim(m) {
   const p = G.players.get(m.id);
   if (!p) return;
   p.angle = m.angle; p.power = m.power; p.w = m.w;
+  if (m.c && !p.charging) { p.charging = true; p.chargeT0 = now(); }
   updateHud();
 }
 
@@ -454,16 +463,18 @@ function onShot(m) {
   if (G.replay) finishReplay();
   G.phase = 'anim'; G.cur = m.id;
   const p = G.players.get(m.id);
-  p.angle = m.angle; p.power = m.power;
+  p.angle = m.angle; p.power = m.power; p.lastPow = m.power;
+  stopCharge();
+  p.charging = false; p.recoil = 1;
   const i = p.inv.indexOf(m.weapon);
   if (i >= 0) p.inv.splice(i, 1);
   G.replay = { t0: now(), projs: m.projs, events: m.events, ei: 0, dur: m.dur, after: m.after };
   const spec = G.powers.get(m.weapon);
   banner(m.weapon.toUpperCase(), 1600, spec ? spec.color : '#ffd84a');
   Sound.sfx('shoot');
-  // muzzle splash
-  const a = m.angle * Math.PI / 180, mx = p.dx + Math.cos(a) * PHYS.barrel, my = WH - (p.dy + PHYS.pivot + Math.sin(a) * PHYS.barrel);
-  burst(G.world, mx, my, spec ? spec.color : '#fffbe8', 8, 50);
+  // splash from the tip of the dong
+  const tip = p.tip || { x: p.dx + Math.cos(m.angle * Math.PI / 180) * PHYS.barrel, y: WH - (p.dy + PHYS.pivot + Math.sin(m.angle * Math.PI / 180) * PHYS.barrel) };
+  burst(G.world, tip.x, tip.y, spec ? spec.color : '#fffbe8', 8, 50);
   $('#wList').hidden = true;
   updateHud();
 }
@@ -518,6 +529,7 @@ function runEvent(W, e) {
       const v = G.players.get(e.id), by = G.players.get(e.by);
       if (!v || !by) break;
       by.score += e.own ? -e.n : e.n;
+      v.taken += e.n;
       v.flash = now() + 450;
       floatText(W, (e.own ? '-' : '+') + e.n, v.dx, WH - v.dy - 40, e.own ? '#ff5a4a' : css(by));
       sfx('hit');
@@ -586,10 +598,12 @@ function updateHud() {
   const wn = me.inv[G.w], spec = wn && G.powers.get(wn);
   $('#wName b').textContent = wn ? wn.toUpperCase() : 'OUT OF POWERS';
   $('#wName b').style.color = spec ? spec.color : '#c8a070';
+  $('#flipBtn').disabled = !mine;
   $('#wName small').textContent = spec ? `${spec.type.toUpperCase()} - ${statLine(spec)}   (${G.w + 1}/${me.inv.length})` : '';
   $('#wDesc').textContent = spec ? spec.description : '';
-  $('#angVal').textContent = Math.round(me.angle);
-  $('#powVal').textContent = Math.round(me.power);
+  const fc = G.cur === me.id ? G.face : faceOf(me.angle), el = Math.round(elevOf(me.angle, fc));
+  $('#angVal').textContent = fc > 0 ? `${el}>` : `<${el}`;
+  drawPowerMeter(me);
   $('#moveLbl').textContent = `MOVES ${me.moves}`;
   $('#moveL').disabled = $('#moveR').disabled = !mine || me.moves <= 0;
   $('#wPrev').disabled = $('#wNext').disabled = !mine || me.inv.length < 2;
@@ -617,18 +631,70 @@ function sendAim(force) {
   const me = myPlayer();
   if (!me || !myTurn()) return;
   clearTimeout(G.aimTimer);
-  const go = () => { G.lastAimSent = now(); send({ t: 'aim', a: { angle: me.angle, power: me.power, w: G.w } }); };
+  const go = () => {
+    G.lastAimSent = now();
+    send({ t: 'aim', a: { angle: Math.round(me.angle * 10) / 10, power: Math.round(me.power * 10) / 10, w: G.w, c: CH.on } });
+  };
   if (force || now() - G.lastAimSent > 90) go();
   else G.aimTimer = setTimeout(go, 90);
 }
 
-function adjust(what, d) {
+// ---- worms-style aiming: the crosshair swings up/down on the side you face
+const faceOf = ang => (Math.cos(ang * Math.PI / 180) < -1e-6 ? -1 : 1);
+const elevOf = (ang, face) => (face > 0 ? ang : 180 - ang);
+function setElev(me, el) {
+  el = clamp(el, PHYS.aimMin, 90);
+  me.angle = G.face > 0 ? el : 180 - el;
+}
+function nudgeElev(d) {
   const me = myPlayer();
   if (!myTurn() || !me) return;
-  if (what === 'angle') me.angle = clamp(Math.round(me.angle + d), 0, 180);
-  else me.power = clamp(Math.round(me.power + d), 0, 100);
+  setElev(me, elevOf(me.angle, G.face) + d);
   sendAim(); updateHud();
 }
+function setFace(f) {
+  const me = myPlayer();
+  if (!myTurn() || !me || G.face === f) return;
+  const el = elevOf(me.angle, G.face);
+  G.face = f; setElev(me, el);
+  Sound.sfx('hover'); sendAim(); updateHud();
+}
+
+// ---- worms-style firing: hold SPACE (or the FIRE button) to wind up, let go to shoot
+const CH = { on: false, t0: 0, ticks: 0 };
+const chargeOf = p => {
+  if (p.id === App.myId && CH.on) return clamp((now() - CH.t0) / 1000 / PHYS.charge * 100, 0, 100);
+  if (p.charging) return clamp((now() - p.chargeT0) / 1000 / PHYS.charge * 100, 0, 100);
+  return 0;
+};
+function startCharge() {
+  const me = myPlayer();
+  if (CH.on || !myTurn() || !me || !me.inv.length || G.paused) return;
+  CH.on = true; CH.t0 = now(); CH.ticks = 0;
+  me.power = 0;
+  sendAim(true); updateHud();
+}
+function stepCharge() {
+  if (!CH.on) return;
+  const me = myPlayer();
+  if (!myTurn() || !me) { stopCharge(); return; }
+  const lvl = chargeOf(me);
+  me.power = lvl;
+  if (lvl >= CH.ticks * 10) { Sound.sfx('rev', CH.ticks * 10); CH.ticks++; }
+  sendAim();
+  if (lvl >= 100) releaseCharge();
+}
+function releaseCharge() {
+  if (!CH.on) return;
+  const me = myPlayer();
+  const lvl = me ? chargeOf(me) : 0;
+  CH.on = false;
+  if (!me || !myTurn()) return;
+  me.power = Math.max(1, Math.round(lvl));
+  fire();
+}
+function stopCharge() { CH.on = false; }
+
 function cycleWeapon(d) {
   const me = myPlayer();
   if (!myTurn() || !me || !me.inv.length) return;
@@ -638,6 +704,7 @@ function cycleWeapon(d) {
 function fire() {
   const me = myPlayer();
   if (!myTurn() || !me || !me.inv.length) return;
+  CH.on = false;
   G.phase = 'firing';
   send({ t: 'fire', a: { angle: me.angle, power: me.power, w: G.w } });
   updateHud();
@@ -646,6 +713,15 @@ function drive(d) {
   const me = myPlayer();
   if (!myTurn() || !me || me.moves <= 0) return;
   send({ t: 'move', dir: d });
+}
+
+// power meter in the HUD: live charge, plus a notch where your last shot was
+function drawPowerMeter(me) {
+  const lvl = CH.on ? chargeOf(me) : me.power;
+  $('#powVal').textContent = Math.round(lvl);
+  $('#powBar').style.width = lvl + '%';
+  $('#powLast').hidden = me.lastPow == null;
+  if (me.lastPow != null) $('#powLast').style.left = me.lastPow + '%';
 }
 
 // hold-to-repeat buttons
@@ -659,13 +735,37 @@ function holdButton(el, fn) {
   });
   ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => el.addEventListener(ev, stop));
 }
-document.querySelectorAll('[data-adj]').forEach(b => holdButton(b, () => adjust(b.dataset.adj, +b.dataset.d)));
+document.querySelectorAll('[data-adj]').forEach(b => holdButton(b, () => nudgeElev(+b.dataset.d)));
 holdButton($('#wPrev'), () => cycleWeapon(-1));
 holdButton($('#wNext'), () => cycleWeapon(1));
 $('#moveL').onclick = () => drive(-1);
 $('#moveR').onclick = () => drive(1);
-$('#btnFire').onclick = fire;
+$('#flipBtn').onclick = () => setFace(-G.face);
+const fireBtn = $('#btnFire');
+fireBtn.addEventListener('pointerdown', e => { if (fireBtn.disabled) return; e.preventDefault(); fireBtn.setPointerCapture(e.pointerId); startCharge(); });
+fireBtn.addEventListener('pointerup', releaseCharge);
+fireBtn.addEventListener('pointercancel', releaseCharge);
 $('#wName').onclick = () => { if (!myTurn()) return; $('#wList').hidden = !$('#wList').hidden; renderWList(); };
+
+// UP / DOWN swing the crosshair: one degree per tap, accelerating sweep when held
+const held = {};
+function stepAimKeys(dt) {
+  const me = myPlayer();
+  if (!me || !myTurn()) return;
+  const d = (held.ArrowUp ? 1 : 0) - (held.ArrowDown ? 1 : 0);
+  if (!d) return;
+  const k = held.ArrowUp && held.ArrowDown ? 0 : (now() - (d > 0 ? held.ArrowUp : held.ArrowDown)) / 1000;
+  if (k < 0.18) return;                                         // the tap already moved it a degree
+  const rate = held.shift ? 10 : 30 + Math.min(1, (k - 0.18) / 0.8) * 60;   // deg/s
+  setElev(me, elevOf(me.angle, G.face) + d * rate * dt);
+  sendAim(); updateHud();
+}
+addEventListener('keyup', e => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') held[e.key] = 0;
+  if (e.key === 'Shift') held.shift = false;
+  if (e.key === ' ') { e.preventDefault(); releaseCharge(); }
+});
+addEventListener('blur', () => { held.ArrowUp = held.ArrowDown = 0; releaseCharge(); });
 
 addEventListener('keydown', e => {
   if (e.key === 'Escape') { e.preventDefault(); $('#pause').hidden ? openPause() : resumeGame(); return; }
@@ -673,29 +773,33 @@ addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 'm' || e.key === 'M') { Sound.init(); Sound.setMusic(!Sound.musicOn); updateMusicLabels(); return; }
   if (!G || App.screen !== 'game') return;
-  const step = e.shiftKey ? 5 : 1;
   const k = e.key;
-  if (k === 'ArrowLeft') adjust('angle', step);
-  else if (k === 'ArrowRight') adjust('angle', -step);
-  else if (k === 'ArrowUp') adjust('power', step);
-  else if (k === 'ArrowDown') adjust('power', -step);
+  held.shift = e.shiftKey;
+  if (k === 'ArrowUp' || k === 'ArrowDown') {
+    if (!e.repeat) { held[k] = now(); nudgeElev(k === 'ArrowUp' ? 1 : -1); }
+  }
+  else if (k === 'ArrowLeft') setFace(-1);
+  else if (k === 'ArrowRight') setFace(1);
+  else if (k === 'a' || k === 'A') { if (!e.repeat) drive(-1); }
+  else if (k === 'd' || k === 'D') { if (!e.repeat) drive(1); }
   else if (k === 'w' || k === 'W') cycleWeapon(-1);
   else if (k === 's' || k === 'S') cycleWeapon(1);
-  else if (k === ' ' || k === 'Enter') fire();
+  else if (k === ' ') { if (!e.repeat) startCharge(); }
+  else if (k === 'Enter') { if (!e.repeat && !CH.on) fire(); }   // re-fire at your last power
   else return;
   e.preventDefault();
 });
 
-// click + drag on the field to aim: direction = angle, distance = power
+// click / drag on the field points the crosshair (power still comes from holding SPACE / FIRE)
 let dragging = false;
 function aimAt(e) {
   const me = myPlayer(), r = cv.getBoundingClientRect();
   const wx = (e.clientX - r.left) / r.width * WW, wy = WH - (e.clientY - r.top) / r.height * WH;
   const dx = wx - me.dx, dy = wy - (me.dy + PHYS.pivot);
-  let a = Math.atan2(dy, dx) * 180 / Math.PI;
-  if (a < 0) a = dx >= 0 ? 0 : 180;
-  me.angle = clamp(Math.round(a), 0, 180);
-  me.power = clamp(Math.round(Math.hypot(dx, dy) / 2), 0, 100);
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+  const a = Math.atan2(dy, dx) * 180 / Math.PI;
+  G.face = dx >= 0 ? 1 : -1;
+  setElev(me, G.face > 0 ? a : 180 - (a < 0 ? a + 360 : a));
   sendAim(); updateHud();
 }
 cv.addEventListener('pointerdown', e => { if (myTurn()) { dragging = true; cv.setPointerCapture(e.pointerId); aimAt(e); } });
@@ -725,10 +829,23 @@ function stepWorld(W, dt) {
     p.dy = p.dy > target ? Math.max(target, p.dy - 150 * dt) : target;
     let diff = p.angle - p.da;
     p.da += diff * Math.min(1, dt * 12);
+    const wt = G && W === G.world ? woodOf(p) : (p.woodT == null ? 1 : p.woodT);
+    p.wood = (p.wood == null ? 1 : p.wood) + (wt - (p.wood == null ? 1 : p.wood)) * Math.min(1, dt * 1.2);
+    p.recoil = Math.max(0, (p.recoil || 0) - dt * 3.5);
   }
   for (const q of W.parts) { q.vy += 260 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
   W.parts = W.parts.filter(q => q.life > 0 && q.y < WH + 10);
   W.shake = Math.max(0, W.shake - dt * 14);
+}
+
+// How hard a dong is, 0..1: full health and in the lead = rock hard. Taking damage or
+// falling behind the leader makes it go soft.
+function woodOf(p) {
+  const health = clamp(1 - p.taken / G.hpMax, 0, 1);
+  let lead = null;
+  for (const o of G.players.values()) if (o !== p && !o.gone && (lead === null || o.score > lead)) lead = o.score;
+  const behind = lead === null ? 0 : Math.max(0, lead - p.score);
+  return health * (1 - 0.6 * clamp(behind / 120, 0, 1));
 }
 
 function renderTerrain(W) {
@@ -761,7 +878,10 @@ function drawWorld(W, t, extra) {
   }
   for (const p of W.tanks) {
     if (p.gone) continue;
-    drawTank(p.dx, WH - p.dy, p.da, p.color, t, { flash: p.flash > t, roll: p.roll });
+    const ch = G && W === G.world ? chargeOf(p) / 100 : 0;
+    p.tip = drawTank(p.dx, WH - p.dy, p.da, p.color, t, {
+      flash: p.flash > t, roll: p.roll, erect: p.wood, face: G && W === G.world && p.id === App.myId && G.cur === p.id ? G.face : 0, recoil: p.recoil, charge: ch, moving: Math.abs(p.dx - p.x) > 0.5,
+    });
   }
   if (extra) extra(t);
   // fires
@@ -835,25 +955,45 @@ function drawProjectiles(t) {
 }
 
 function drawGameOverlay(t) {
-  // names, turn arrow, aim guide
+  // names, health bars, turn arrow
   for (const p of G.world.tanks) {
     if (p.gone) continue;
-    const sx = p.dx, sy = WH - p.dy;
-    pixText(p.name, sx, sy - 40, css(p), { align: 'center' });
+    const sx = Math.round(p.dx), sy = Math.round(WH - p.dy);
+    pixText(p.name, sx, sy - 46, css(p), { align: 'center' });
+    const hp = clamp(1 - p.taken / G.hpMax, 0, 1), bw = 22, fill = Math.round(bw * hp);
+    g.fillStyle = OUT; g.fillRect(sx - bw / 2 - 1, sy - 39, bw + 2, 4);
+    g.fillStyle = '#3a1418'; g.fillRect(sx - bw / 2, sy - 38, bw, 2);
+    g.fillStyle = hp > 0.6 ? '#5ae86a' : hp > 0.3 ? '#ffd84a' : '#ff5a4a'; g.fillRect(sx - bw / 2, sy - 38, fill, 2);
     if (G.cur === p.id && G.phase !== 'anim') {
-      const by = sy - 50 + Math.round(Math.sin(t / 150) * 2);
+      const by = sy - 58 + Math.round(Math.sin(t / 150) * 2);
       g.fillStyle = OUT; g.fillRect(sx - 4, by - 1, 9, 2); g.fillRect(sx - 3, by + 1, 7, 2); g.fillRect(sx - 2, by + 3, 5, 1);
       g.fillStyle = css(p); g.fillRect(sx - 3, by, 7, 1); g.fillRect(sx - 2, by + 1, 5, 1); g.fillRect(sx - 1, by + 2, 3, 1); g.fillRect(sx, by + 3, 1, 1);
     }
   }
-  const me = myPlayer();
-  if (me && myTurn()) {
-    const a = me.angle * Math.PI / 180, L = 10 + me.power * 0.6;
-    const x0 = me.dx + Math.cos(a) * (PHYS.barrel + 4), y0 = WH - (me.dy + PHYS.pivot + Math.sin(a) * (PHYS.barrel + 4));
-    for (let d = 0; d < L; d += 4) {
-      g.fillStyle = d % 8 ? '#ffd84a' : '#fffbe8';
-      g.fillRect(Math.round(x0 + Math.cos(a) * d), Math.round(y0 - Math.sin(a) * d), 1, 1);
+  // the aiming player's crosshair + wind-up wedge (everyone sees it, like worms)
+  const cur = G.cur && G.players.get(G.cur);
+  if (cur && !cur.gone && (G.phase === 'aim' || G.phase === 'firing')) {
+    const a = cur.angle * Math.PI / 180, ux = Math.cos(a), uy = -Math.sin(a);
+    const px = cur.dx, py = WH - (cur.dy + PHYS.pivot);
+    const lvl = chargeOf(cur) / 100;
+    if (lvl > 0) {
+      const L = 8 + lvl * (CROSS_D - 12);
+      for (let d = 8; d <= L; d += 1) disk(px + ux * d, py + uy * d, 1.4 + (d - 8) * 0.12, OUT);
+      for (let d = 8; d <= L; d += 1) {
+        const f = (d - 8) / (CROSS_D - 12);
+        disk(px + ux * d, py + uy * d, 0.6 + (d - 8) * 0.12, f < 0.35 ? '#ffd84a' : f < 0.7 ? '#ff9a1f' : '#ff3a2a');
+      }
     }
+    const cx = Math.round(px + ux * CROSS_D), cy = Math.round(py + uy * CROSS_D);
+    const col = css(cur), pulse = ((t / 250) | 0) % 2;
+    const ring = (c, r) => {
+      g.fillStyle = c;
+      for (let i = 0; i < 16; i++) { const q = i / 16 * Math.PI * 2 + t / 900; g.fillRect(Math.round(cx + Math.cos(q) * r), Math.round(cy + Math.sin(q) * r), 1, 1); }
+    };
+    ring(OUT, 5); ring(OUT, 3); ring(pulse ? col : '#fffbe8', 4);
+    g.fillStyle = OUT; g.fillRect(cx - 8, cy - 1, 5, 3); g.fillRect(cx + 4, cy - 1, 5, 3); g.fillRect(cx - 1, cy - 8, 3, 5); g.fillRect(cx - 1, cy + 4, 3, 5);
+    g.fillStyle = col; g.fillRect(cx - 7, cy, 3, 1); g.fillRect(cx + 5, cy, 3, 1); g.fillRect(cx, cy - 7, 1, 3); g.fillRect(cx, cy + 5, 1, 3);
+    g.fillStyle = '#fffbe8'; g.fillRect(cx, cy, 1, 1);
   }
   if (G.replay) drawProjectiles(t);
 }
@@ -924,7 +1064,7 @@ function stepDemo(t, dt) {
       const xi = Math.floor(P.x);
       if (hitTank || (xi >= 0 && xi < WW && P.y <= W.H[xi]) || P.x < -30 || P.x > WW + 30) {
         if (P.x > -30 && P.x < WW + 30) runEvent(W, { k: 'boom', x: P.x, y: P.y, r: 16, c: P.c, carve: true });
-        if (hitTank) { hitTank.flash = t + 450; floatText(W, '+30', hitTank.dx, WH - hitTank.dy - 40, PLAYER_COLORS[P.me.color].css); }
+        if (hitTank) { hitTank.flash = t + 450; hitTank.woodT = Math.max(0, (hitTank.woodT == null ? 1 : hitTank.woodT) - 0.3); floatText(W, '+30', hitTank.dx, WH - hitTank.dy - 40, PLAYER_COLORS[P.me.color].css); }
         demo.proj = null; demo.t = t + 1400 + Math.random() * 600;
         if (++demo.shots > 10) setTimeout(resetDemo, 1500);
         break;
@@ -943,8 +1083,12 @@ function frame(t) {
   requestAnimationFrame(frame);   // first, so one bad frame can never freeze the game
   const dt = Math.min(0.05, (t - last) / 1000);
   last = t;
+  g.setTransform(RES, 0, 0, RES, 0, 0);
   if (G && App.screen !== 'menu' && App.screen !== 'how' && App.screen !== 'lobby' && App.screen !== 'room') {
     if (G.replay) updateReplay(t);
+    stepAimKeys(dt);
+    stepCharge();
+    if (CH.on || [...G.players.values()].some(q => q.charging)) { const me = myPlayer(); if (me) drawPowerMeter(me); }
     stepWorld(G.world, dt);
     drawWorld(G.world, t, drawGameOverlay);
     drawBanner(t);

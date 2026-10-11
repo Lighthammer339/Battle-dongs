@@ -46,6 +46,9 @@ TEABAG_GRAVITY = 0.4    # teabag hops float down slowly (multiplier of G)
 TANK_R = 8                     # hitbox radius around the tank's middle
 PIVOT = 12                     # barrel pivot height above the ground
 BARREL = 14
+AIM_MIN, AIM_MAX = -45, 225   # worms-style aim: up to 45 degrees below the horizon on either side
+CHARGE_SEC = 1.6               # seconds to charge from 0 to full power (clients use the same)
+HP_PER_WEAPON = 25             # health pool = this x weapons per player (health is cosmetic: it sets the wood)
 
 BOT_NAMES = ["Richard", "Big Johnson", "Willy", "Peter", "Moby", "Sir Longfellow",
              "Wang Chung", "Little Jimmy", "Captain Wood", "Shlongo"]
@@ -443,6 +446,7 @@ class Shot:
             return
         own = tk is self.me
         self.me["score"] += -amt if own else amt
+        tk["taken"] += amt
         self.emit("dmg", id=tk["id"], by=self.me["id"], n=amt, own=own)
 
     def dig(self, p):
@@ -518,7 +522,7 @@ class Game:
         for m, x in zip(members, xs):
             self.players[m["id"]] = {
                 "id": m["id"], "name": m["name"], "color": m["color"], "bot": m["bot"],
-                "x": x, "y": 0.0, "score": 0, "moves": MOVES, "inv": [], "gone": False,
+                "x": x, "y": 0.0, "score": 0, "taken": 0, "moves": MOVES, "inv": [], "gone": False,
                 "angle": 45 if x < WW / 2 else 135, "power": 60, "w": 0,
             }
         self.order = list(self.players.values())
@@ -545,7 +549,7 @@ class Game:
     def state(self):
         return {
             "tanks": [{k: (r1(p[k]) if k in ("x", "y") else p[k])
-                       for k in ("id", "x", "y", "score", "moves", "inv", "gone", "angle", "power")}
+                       for k in ("id", "x", "y", "score", "taken", "moves", "inv", "gone", "angle", "power")}
                       for p in self.players.values()],
             "H": [r1(h) for h in self.H],
         }
@@ -593,7 +597,9 @@ class Game:
         room = self.room
         try:
             room.broadcast({"t": "gameStart", "turnSec": room.turn_sec, "W": WW, "H": WH,
-                            "physics": {"g": G, "vmax": VMAX, "pivot": PIVOT, "barrel": BARREL},
+                            "physics": {"g": G, "vmax": VMAX, "pivot": PIVOT, "barrel": BARREL,
+                                        "aimMin": AIM_MIN, "aimMax": AIM_MAX, "charge": CHARGE_SEC},
+                            "hp": HP_PER_WEAPON * room.weapons,
                             "players": [{k: p[k] for k in ("id", "name", "color", "bot")} for p in self.order],
                             "powers": self.powers, "draft": room.draft, "state": self.state()})
             await asyncio.sleep(1.0)
@@ -709,19 +715,20 @@ class Game:
         if not p or self.current != pid or self.fire_req:
             return
         try:
-            p["angle"] = clamp(float(a.get("angle", p["angle"])), 0, 180)
+            p["angle"] = clamp(float(a.get("angle", p["angle"])), AIM_MIN, AIM_MAX)
             p["power"] = clamp(float(a.get("power", p["power"])), 0, 100)
             p["w"] = int(clamp(int(a.get("w", p["w"])), 0, max(0, len(p["inv"]) - 1)))
         except (TypeError, ValueError):
             return
-        self.room.broadcast({"t": "aim", "id": pid, "angle": p["angle"], "power": p["power"], "w": p["w"]})
+        self.room.broadcast({"t": "aim", "id": pid, "angle": p["angle"], "power": p["power"], "w": p["w"],
+                             "c": bool(a.get("c"))})
 
     def fire(self, pid, a):
         p = self.players.get(pid)
         if not p or self.current != pid or self.fire_req or not isinstance(a, dict):
             return
         try:
-            self.fire_req = {"angle": clamp(float(a.get("angle")), 0, 180),
+            self.fire_req = {"angle": clamp(float(a.get("angle")), AIM_MIN, AIM_MAX),
                              "power": clamp(float(a.get("power")), 0, 100),
                              "w": int(a.get("w", 0))}
         except (TypeError, ValueError):
@@ -839,8 +846,14 @@ class Game:
         if p["gone"]:
             return
         p["w"] = w
-        self.room.broadcast({"t": "aim", "id": p["id"], "angle": ang, "power": power, "w": w})
-        await asyncio.sleep(1.0)
+        self.room.broadcast({"t": "aim", "id": p["id"], "angle": ang, "power": power * 0.4, "w": w})
+        await asyncio.sleep(0.7)
+        await self.gate()
+        if p["gone"]:
+            return
+        # wind up like a human holding SPACE: clients animate the charge meter up to `power`
+        self.room.broadcast({"t": "aim", "id": p["id"], "angle": ang, "power": power, "w": w, "c": True})
+        await asyncio.sleep(power / 100 * CHARGE_SEC + 0.1)
         await self.gate()
         if p["gone"]:
             return

@@ -221,54 +221,209 @@ function disk(cx, cy, r, col) {
 }
 
 const SKIN = '#e8a890', SKIN_D = '#c07868', HEAD = '#f08a9a', HEAD_D = '#c85a6a';
+const VEIN = '#7a5aa8', HAIR = '#3a2014';
 
-// The dick tank. (sx, sy) = ground under its middle; ang in degrees (0 = right, 90 = up).
-function drawTank(sx, sy, ang, color, t, o = {}) {
-  const pc = PLAYER_COLORS[color], a = ang * Math.PI / 180;
-  const ux = Math.cos(a), uy = -Math.sin(a);
-  const px = sx, py = sy - 12;                     // pivot (server PIVOT = 12)
-  sx = Math.round(sx); sy = Math.round(sy);
-  const flash = o.flash && ((t / 60) | 0) % 2 === 0;
-  // shaft = barrel
-  for (let d = 0; d <= 10; d++) disk(px + ux * d, py + uy * d, 3, OUT);
-  disk(px + ux * 13, py + uy * 13, 4.4, OUT);
-  for (let d = 0; d <= 10; d++) disk(px + ux * d, py + uy * d, 2, flash ? '#ffffff' : (d % 4 === 2 ? SKIN_D : SKIN));
-  const hx = px + ux * 13, hy = py + uy * 13;
-  disk(hx, hy, 3.4, flash ? '#ffffff' : HEAD);
-  // bandana across the head, tails flapping behind it
-  if (!flash) {
-    g.fillStyle = pc.b;
-    for (let j = -4; j <= 4; j++) for (let i = -4; i <= 4; i++) {
-      const along = i * ux + j * uy;
-      if (i * i + j * j <= 12 && along > -1.6 && along < 0.4) g.fillRect(Math.round(hx) + i, Math.round(hy) + j, 1, 1);
+// Tanks are drawn at TR x the world resolution so they get finer pixels than the terrain.
+const TR = 2;
+
+// A big wrinkly testicle with bulging veins and a few stray hairs, at tank (hi-res) scale.
+const veinyCache = new Map();
+function getVeinyBall(w, h, skin, seed) {
+  const k = [w, h, skin, seed].join();
+  if (veinyCache.has(k)) return veinyCache.get(k);
+  const base = mix(skin, '#9a3a4a', 0.2), W2 = w + 6, H2 = h + 6, cx = W2 / 2, cy = H2 / 2 + 1;
+  const nx = (x, y) => [(x + 0.5 - cx) / (w / 2), (y + 0.5 - cy) / (h / 2)];
+  const inside = (x, y) => { const [dx, dy] = nx(x, y); return dx * dx + dy * dy <= 1; };
+  const r = rng(seed * 31 + w), veins = new Set(), hairs = new Set();
+  // veins: random walks creeping up from the bottom, sometimes forking
+  const walk = (x, y, a, len) => {
+    for (let i = 0; i < len; i++) {
+      a += (r() - 0.5) * 0.9;
+      x += Math.cos(a); y += Math.sin(a);
+      if (!inside(Math.round(x), Math.round(y))) return;
+      veins.add(Math.round(x) + ',' + Math.round(y));
+      if (i > 3 && r() < 0.08) walk(x, y, a + (r() < 0.5 ? -1 : 1) * 0.9, len - i - 2);
     }
-    const bx = hx - ux * 1, by = hy - uy * 1, wav = Math.sin(t / 120);
-    g.fillStyle = pc.d;
-    for (let k = 1; k <= 4; k++) {
-      g.fillRect(Math.round(bx - ux * k - uy * (3 + wav * k * 0.3)), Math.round(by - uy * k + ux * (3 + wav * k * 0.3)), 1, 1);
-      g.fillRect(Math.round(bx - ux * k - uy * (2 - wav * k * 0.4)), Math.round(by - uy * k + ux * (2 - wav * k * 0.4)), 1, 1);
-    }
-    // googly eyes on the bandana
-    const ex = -uy, ey = ux;
-    for (const s of [-1.6, 1.6]) {
-      g.fillStyle = '#ffffff'; g.fillRect(Math.round(hx - ux * 0.6 + ex * s), Math.round(hy - uy * 0.6 + ey * s), 1, 1);
-    }
-    g.fillStyle = HEAD_D; g.fillRect(Math.round(hx + ux * 2.4), Math.round(hy + uy * 2.4), 1, 1);   // pee hole
+  };
+  for (let v = 0; v < 3; v++) {
+    const t = Math.PI * (0.15 + r() * 0.7);
+    walk(cx + Math.cos(t) * w * 0.4, cy + Math.sin(t) * h * 0.4, t + Math.PI + (r() - 0.5), 9 + r() * 7);
   }
-  // the balls = turret
-  const ball = flash ? whiteOutCached(getBall(11, 10, SKIN), '#ffffff') : getBall(11, 10, SKIN);
-  g.drawImage(ball, sx - 12, sy - 15);
-  g.drawImage(ball, sx - 1, sy - 15);
-  // treads
-  g.fillStyle = OUT; g.fillRect(sx - 11, sy - 6, 22, 6); g.fillRect(sx - 12, sy - 5, 24, 4);
-  g.fillStyle = pc.d; g.fillRect(sx - 10, sy - 6, 20, 1);
-  g.fillStyle = '#3a3632'; g.fillRect(sx - 10, sy - 4, 20, 3); g.fillRect(sx - 11, sy - 3, 22, 1);
-  g.fillStyle = pc.b; g.fillRect(sx - 10, sy - 5, 20, 1);
-  const roll = (o.roll || 0) | 0;
-  g.fillStyle = '#8a8478';
-  for (let k = 0; k < 6; k++) g.fillRect(sx - 9 + ((k * 4 + roll) % 20 + 20) % 20, sy - 3, 2, 1);
-  g.fillStyle = '#c8c0b0';
-  for (const wx of [-7, -2, 3, 8]) g.fillRect(sx + wx - 1, sy - 2, 1, 1);
+  // hairs: short curly strands sticking out of the outline
+  for (let n = 0; n < 5; n++) {
+    const t = Math.PI * (0.9 + r() * 1.2);   // mostly on the sides / top
+    let x = cx + Math.cos(t) * (w / 2 + 0.5), y = cy + Math.sin(t) * (h / 2 + 0.5), a = t + (r() - 0.5);
+    for (let i = 0; i < 3; i++) { x += Math.cos(a); y += Math.sin(a); a += 0.7; hairs.add(Math.round(x) + ',' + Math.round(y)); }
+  }
+  const c = paint(W2, H2, (x, y) => {
+    if (!inside(x, y)) {
+      if (inside(x - 1, y) || inside(x + 1, y) || inside(x, y - 1) || inside(x, y + 1)) return OUT;
+      return hairs.has(x + ',' + y) ? HAIR : null;
+    }
+    const [dx, dy] = nx(x, y), dith = ((x + y) & 1) ? 0.06 : -0.06;
+    const l = -dx * 0.55 - dy * 0.75 + dith;                // light from the top-left
+    if (dx > -0.55 && dx < -0.3 && dy > -0.62 && dy < -0.4) return mix(base, '#ffffff', 0.55);   // shine
+    if (veins.has(x + ',' + y)) return mix(VEIN, base, l > 0 ? 0.25 : 0.05);
+    if (veins.has(x + ',' + (y + 1)) && l > -0.2) return mix(base, '#ffffff', 0.18);   // vein bulge catches light
+    const wr = Math.abs(Math.sin(y * 0.85 + Math.sin(x * 0.45 + seed) * 1.6));
+    if (wr < 0.14 && dy > -0.45) return mix(base, '#000000', 0.26);          // wrinkles
+    if (hash(x, y, 5 + seed) % 29 === 0) return mix(base, HAIR, 0.6);       // follicles
+    return l > 0.45 ? mix(base, '#ffffff', 0.22) : l > 0.12 ? mix(base, '#ffffff', 0.08)
+      : l < -0.5 ? mix(base, '#000000', 0.32) : l < -0.12 ? mix(base, '#000000', 0.16) : base;
+  });
+  veinyCache.set(k, c);
+  return c;
+}
+
+// The dick tank. (sx, sy) = ground under its middle (world px); ang in degrees (0 = right, 90 = up).
+// o: { face: 1 / -1 (optional), flash, roll, erect: 0..1 (1 = rock hard, 0 = limp noodle), recoil: 0..1, charge: 0..1, moving }
+// Returns the tip of the head in world px (where the load comes out).
+function drawTank(sx, sy, ang, color, t, o = {}) {
+  const pc = PLAYER_COLORS[color];
+  const flash = o.flash && ((t / 60) | 0) % 2 === 0;
+  const C = c => (flash ? '#ffffff' : c);
+  const e = o.erect == null ? 1 : Math.max(0, Math.min(1, o.erect));
+  const face = o.face || (Math.cos(ang * Math.PI / 180) < -1e-6 ? -1 : 1);
+  g.save(); g.scale(1 / TR, 1 / TR);
+  const X = Math.round(sx * TR), Y = Math.round(sy * TR);
+  const rect = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), w, h); };
+  const roll = o.roll || 0;
+
+  // ---- exhaust pipe at the back, puffing while driving
+  const ex = X - face * 21;
+  rect(ex - 2, Y - 27, 5, 10, OUT); rect(ex - 1, Y - 26, 3, 9, C('#6a6460')); rect(ex - 1, Y - 26, 1, 9, C('#9a948c'));
+  if (o.moving) for (let k = 0; k < 3; k++) {
+    const ph = (t / 400 + k / 3) % 1;
+    disk(ex - face * ph * 6, Y - 29 - ph * 12, 1 + ph * 2.5, ph < 0.5 ? '#8a8078' : '#5a5250');
+  }
+
+  // ---- treads: rubber loop, road wheels, moving lugs
+  const capsule = (cy, rr, c) => { disk(X - 19, cy, rr, c); disk(X + 19, cy, rr, c); rect(X - 19, cy - rr, 38, Math.round(rr * 2) + 1, c); };
+  capsule(Y - 7, 7.5, OUT);
+  capsule(Y - 7, 6.5, C('#2b2724'));
+  capsule(Y - 7, 4.6, C('#46403a'));
+  for (let i = 0; i < 9; i++) {   // lugs ride the bottom run and the top run in opposite directions
+    const ob = ((i * 5 - roll * 2) % 45 + 45) % 45 - 22, ot = ((i * 5 + roll * 2) % 45 + 45) % 45 - 22;
+    rect(X + ob, Y - 1, 2, 1, C('#8a8478'));
+    rect(X + ot, Y - 14, 2, 1, C('#5a554e'));
+  }
+  for (const wx of [-19, -9.5, 0, 9.5, 19]) {
+    const cx = X + wx, cy = Y - 7, wa = roll * 0.35 + wx;
+    disk(cx, cy, 4.6, OUT); disk(cx, cy, 3.6, C('#8a8478')); disk(cx, cy, 2.4, C('#5a554e')); disk(cx - 1, cy - 1, 1, C('#c8c0b0'));
+    rect(cx + Math.cos(wa) * 2.6, cy + Math.sin(wa) * 2.6, 1, 1, C('#c8c0b0'));
+    rect(cx - Math.cos(wa) * 2.6, cy - Math.sin(wa) * 2.6, 1, 1, OUT);
+  }
+  // fender plate in team colors
+  rect(X - 25, Y - 19, 50, 7, OUT);
+  rect(X - 24, Y - 18, 48, 5, C(pc.b));
+  rect(X - 24, Y - 18, 48, 1, C(pc.l));
+  rect(X - 24, Y - 14, 48, 1, C(pc.d));
+  for (let k = -20; k <= 20; k += 8) { rect(X + k, Y - 16, 1, 1, C(pc.d)); rect(X + k, Y - 17, 1, 1, C(pc.l)); }
+
+  // ---- the balls = turret. Jiggle when driving or hit, hang lower when it's limp.
+  const jig = (o.moving || o.flash) ? Math.round(Math.sin(t / 45)) : 0;
+  const sag = Math.round((1 - e) * 2);
+  const bl = getVeinyBall(22, 20 + sag, SKIN, 1), br = getVeinyBall(24, 22 + sag, SKIN, 2);
+  const bL = flash ? whiteOutCached(bl, '#ffffff') : bl, bR = flash ? whiteOutCached(br, '#ffffff') : br;
+  const back = face > 0 ? [bL, -1] : [bR, 1], front = face > 0 ? [bR, 1] : [bL, -1];
+  for (const [img, side] of [back, front]) {
+    g.drawImage(img, (X + side * 10 - img.width / 2) | 0, Y - 17 - img.height + 3 + (side > 0 ? jig : -jig));
+  }
+  // the seam between them
+  g.fillStyle = C(mix(SKIN, '#000000', 0.4));
+  for (let y = Y - 34; y < Y - 19; y++) g.fillRect(X + Math.round(Math.sin(y * 0.7)), y, 1, 1);
+
+  // ---- the shaft = barrel. Points along the aim, droops and shrinks as the wood fades.
+  const P = { x: X, y: Y - 12 * TR };                       // pivot (server PIVOT = 12 world px)
+  const rh = rng(7 + color);                                // pubes
+  g.fillStyle = C(HAIR);
+  for (let n = 0; n < 22; n++) {
+    const a = Math.PI * (1.05 + rh() * 0.9), d = 4 + rh() * 5;
+    const x = P.x + Math.cos(a) * d, y = P.y + Math.sin(a) * d;
+    g.fillRect(Math.round(x), Math.round(y), 1, 1);
+    g.fillRect(Math.round(x + Math.cos(a + 1.2)), Math.round(y + Math.sin(a + 1.2)), 1, 1);
+  }
+  const theta = ang * Math.PI / 180, limp = 1 - e;
+  const target = (face > 0 ? -80 : 260) * Math.PI / 180;    // where gravity pulls a floppy one
+  const sway = limp * 0.12 * Math.sin(t / 650 + color);
+  const beat = (t % 1000) < 110 ? 1 : 0;                    // heartbeat throb
+  const shake = (o.charge || 0) * 0.8;
+  const L = (9 + 6 * e) * TR * (1 - 0.3 * (o.recoil || 0));
+  const R0 = (2.2 + 0.4 * e) * TR + beat * e * 0.5;
+  const N = Math.max(6, Math.ceil(L / 1.5));
+  const pts = [];
+  let x = P.x, y = P.y;
+  for (let i = 0; i <= N; i++) {
+    const s = i / N, k = Math.min(1, limp * (0.25 + 0.85 * Math.pow(s, 1.2)) + sway * s);
+    const phi = theta + (target - theta) * k;
+    pts.push({ x: x + (Math.random() - 0.5) * shake, y: y + (Math.random() - 0.5) * shake, phi, r: R0 * (1 - 0.1 * s) });
+    x += Math.cos(phi) * (L / N); y -= Math.sin(phi) * (L / N);
+  }
+  // unit normal pointing at the screen-bottom side of the shaft (the shadow side)
+  const under = q => { let nx = Math.sin(q.phi), ny = Math.cos(q.phi); if (ny < 0 || (ny === 0 && nx < 0)) { nx = -nx; ny = -ny; } return [nx, ny]; };
+  const shaftCol = mix(mix(SKIN, '#d8b4a4', limp * 0.5), '#f0889a', e * 0.25);
+  const end = pts[pts.length - 1], dx = Math.cos(end.phi), dy = -Math.sin(end.phi);
+  const HR = R0 * 1.3, hx = end.x + dx * 2, hy = end.y + dy * 2;
+  for (const q of pts) disk(q.x, q.y, q.r + 1, OUT);
+  disk(hx - dx * 1.5, hy - dy * 1.5, HR + 1, OUT); disk(hx + dx * 1.2, hy + dy * 1.2, HR + 0.6, OUT);
+  for (const q of pts) disk(q.x, q.y, q.r, C(shaftCol));
+  for (const q of pts) { const [ux, uy] = under(q); disk(q.x + ux * q.r * 0.55, q.y + uy * q.r * 0.55, q.r * 0.5, C(mix(shaftCol, '#7a2a3a', 0.35))); }
+  for (const q of pts) { const [ux, uy] = under(q); disk(q.x - ux * q.r * 0.5, q.y - uy * q.r * 0.5, q.r * 0.3, C(mix(shaftCol, '#ffffff', 0.3))); }
+  // veins: bulge more the harder it is, flash brighter on each throb
+  if (!flash && e > 0.15) {
+    g.fillStyle = mix(shaftCol, VEIN, 0.25 + 0.5 * e + beat * 0.15);
+    pts.forEach((q, i) => {
+      if (i < 2 || i > pts.length - 2) return;
+      const [ux, uy] = under(q), s = i / N;
+      const o1 = q.r * (0.1 + 0.45 * Math.sin(s * 8 + color)), o2 = q.r * (-0.55 + 0.25 * Math.sin(s * 11 + 2));
+      g.fillRect(Math.round(q.x + ux * o1), Math.round(q.y + uy * o1), 1, 1);
+      if (e > 0.45) g.fillRect(Math.round(q.x + ux * o2), Math.round(q.y + uy * o2), 1, 1);
+      if (i % 5 === 3 && e > 0.6) g.fillRect(Math.round(q.x + ux * (o1 + 1) + dx), Math.round(q.y + uy * (o1 + 1) + dy), 1, 1);
+    });
+  }
+  // ---- the head: corona ring, shading, shine, pee hole
+  const head = mix(mix(HEAD, '#c8a0aa', limp * 0.6), '#ff6a8a', e * 0.15), headD = mix(head, '#5a1a2a', 0.35);
+  const [ux, uy] = under(end);
+  disk(hx - dx * 1.5, hy - dy * 1.5, HR, C(headD));
+  disk(hx + dx * 1.2, hy + dy * 1.2, HR - 0.3, C(head));
+  disk(hx + dx * 1.5 + ux * HR * 0.45, hy + dy * 1.5 + uy * HR * 0.45, HR * 0.45, C(mix(head, '#7a2a3a', 0.25)));
+  disk(hx + dx * 1.5 - ux * HR * 0.5, hy + dy * 1.5 - uy * HR * 0.5, HR * 0.28, C(mix(head, '#ffffff', 0.5)));
+  const tx = hx + dx * (HR + 0.5), ty = hy + dy * (HR + 0.5);
+  if (!flash) {
+    g.fillStyle = mix(head, '#3a0a1a', 0.6);
+    g.fillRect(Math.round(tx - ux), Math.round(ty - uy), 1, 1); g.fillRect(Math.round(tx), Math.round(ty), 1, 1);
+    // pre-cum glistens while charging
+    if (o.charge > 0.05) disk(tx + dx * (1 + o.charge * 1.5), ty + dy * (1 + o.charge * 1.5), 0.6 + o.charge * 1.2, (t / 90 | 0) % 2 ? '#fffbe8' : '#d8e8ff');
+    // bandana tied across the head, tails flapping behind it
+    const bcx = hx - dx * 0.8, bcy = hy - dy * 0.8, ri = Math.ceil(HR + 1);
+    g.fillStyle = pc.b;
+    for (let j = -ri; j <= ri; j++) for (let i = -ri; i <= ri; i++) {
+      const along = i * dx + j * dy, across = i * ux + j * uy;
+      if (Math.abs(along) <= 1.6 && Math.abs(across) <= HR + 0.3) g.fillRect(Math.round(bcx) + i, Math.round(bcy) + j, 1, 1);
+    }
+    const kx = bcx - ux * HR, ky = bcy - uy * HR;
+    for (let tail = 0; tail < 2; tail++) {
+      g.fillStyle = tail ? pc.d : pc.b;
+      for (let k = 1; k <= 7; k++) {
+        const w = Math.sin(t / 110 + k * 0.6 + tail * 1.7) * k * 0.25 + (tail ? 1.5 : -0.5);
+        g.fillRect(Math.round(kx - dx * k - ux * (w + k * 0.35)), Math.round(ky - dy * k - uy * (w + k * 0.35)), 2, 1);
+      }
+    }
+    disk(kx, ky, 1.2, pc.d);
+    // googly eyes peeking through the mask, looking where it's aiming
+    for (const sd of [-1, 1]) {
+      const ex2 = bcx + ux * sd * HR * 0.48, ey2 = bcy + uy * sd * HR * 0.48;
+      disk(ex2, ey2, 1.3, '#ffffff');
+      g.fillStyle = OUT; g.fillRect(Math.round(ex2 + dx * 0.8), Math.round(ey2 + dy * 0.8), 1, 1);
+    }
+    // nervous sweat drop when it's going soft
+    if (e < 0.35) {
+      const ph = (t / 1400 + color * 0.3) % 1;
+      disk(hx - ux * (HR + 2), hy - uy * (HR + 2) + ph * 6, 1, '#8ac8ff');
+    }
+  }
+  g.restore();
+  return { x: tx / TR, y: ty / TR };
 }
 const whiteCache = new Map();
 function whiteOutCached(src, fill) {

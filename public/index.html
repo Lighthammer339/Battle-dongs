@@ -32,16 +32,17 @@
       <h2>HOW TO PLAY</h2>
       <ul class="rules">
         <li><b class="c-yel">THE DRAFT:</b> before the fight everyone takes turns picking powers from a shared pool. Pick smart &mdash; what you don't take, they get.</li>
-        <li><b class="c-cyan">YOUR TURN:</b> set the <b>ANGLE</b> and <b>POWER</b> of your dong, pick a power, and hit <b>FIRE</b>. Gravity does the rest. No wind, no excuses.</li>
+        <li><b class="c-cyan">YOUR TURN:</b> swing the <b>CROSSHAIR</b>, pick a power, then <b>HOLD SPACE</b> to work up a load &mdash; let go to shoot. The longer you hold, the further it flies. Max it out and it goes off by itself. No wind, no excuses.</li>
+        <li><b class="c-red">WOOD:</b> your dong stands proud at full health. Take damage or fall behind the leader and it goes soft.</li>
         <li><b class="c-pink">SCORE:</b> every point of damage you deal is a point for you. Hit yourself and you <b>lose</b> those points.</li>
         <li><b class="c-org">THE GROUND</b> gets blown apart and collapses. Dig them into pits, bury them in dirt, or drop the ground out from under them.</li>
         <li><b class="c-green">MOVES:</b> you get 4 moves per game to drive your tank left or right. Use them wisely.</li>
         <li>The game ends when everyone's out of powers. Highest score wins.</li>
       </ul>
       <h3>CONTROLS</h3>
-      <p class="controls">LEFT / RIGHT = angle (hold SHIFT for x5) &middot; UP / DOWN = power<br>
-        W / S = switch power &middot; SPACE or ENTER = FIRE &middot; ESC = pause / quit<br>
-        Or click &amp; drag anywhere on the field to aim &middot; M = music</p>
+      <p class="controls">UP / DOWN = swing the crosshair (hold SHIFT for fine aim) &middot; LEFT / RIGHT = face that way<br>
+        HOLD SPACE = charge, release = FIRE &middot; ENTER = fire at your last power &middot; A / D = drive<br>
+        W / S = switch power &middot; click / drag on the field to point the crosshair &middot; ESC = pause &middot; M = music</p>
       <p class="controls">Every power and what it does lives in <b class="c-yel">powers.txt</b> next to the server &mdash; edit it to make your own.</p>
       <button class="back">BACK</button>
     </div>
@@ -133,16 +134,14 @@
         <button id="wNext" class="arrow">&gt;</button>
       </div>
       <div class="dials">
-        <div class="dial"><label>ANGLE</label><div class="row">
-          <button class="arrow" data-adj="angle" data-d="1">&lt;</button><span id="angVal">45</span><button class="arrow" data-adj="angle" data-d="-1">&gt;</button>
+        <div class="dial"><label>AIM</label><div class="row">
+          <button class="arrow" data-adj="elev" data-d="-1" title="Aim lower (DOWN)">-</button><span id="angVal">45</span><button class="arrow" data-adj="elev" data-d="1" title="Aim higher (UP)">+</button><button class="arrow" id="flipBtn" title="Face the other way (LEFT / RIGHT)">&lt;&gt;</button>
         </div></div>
-        <div class="dial"><label>POWER</label><div class="row">
-          <button class="arrow" data-adj="power" data-d="-1">-</button><span id="powVal">60</span><button class="arrow" data-adj="power" data-d="1">+</button>
-        </div></div>
+        <div class="dial"><label>POWER</label><div class="meter"><i id="powBar"></i><i id="powLast" hidden></i><span id="powVal">0</span></div></div>
         <div class="dial"><label id="moveLbl">MOVES 4</label><div class="row">
           <button class="arrow" id="moveL">&lt;</button><span class="tank">&#9632;</span><button class="arrow" id="moveR">&gt;</button>
         </div></div>
-        <button id="btnFire" class="fire">FIRE!</button>
+        <button id="btnFire" class="fire" title="Hold to charge, let go to shoot">HOLD TO FIRE!</button>
       </div>
       <p id="wDesc" class="wdesc"></p>
     </div>
