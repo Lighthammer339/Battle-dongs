@@ -112,6 +112,66 @@ const Sound = (() => {
         'G5 - - . E5 . C5 . A4 - - - . . . .',
       ]),
     },
+    // Ballsy March: a brass-band military march for the battlefield
+    march: {
+      bpm: 116, swing: 0, root: [48, 53, 43, 48], kind: ['M', 'M', 'dom', 'M'],
+      kick: [0, 8], snare: [4, 10, 12, 14], hat: 4, bass: 'oompah', arp: 'stab', lead: 'p50',
+      melody: parseMelody([
+        'C5 . . C5 E5 . G5 . C6 - - . G5 . E5 .',
+        'F5 . . F5 A5 . C6 . A5 - - . F5 . . .',
+        'G5 . . G5 B5 . D6 . F6 - - . D6 . B5 .',
+        'C6 - - . G5 . E5 . C5 - - - . . . .',
+        'E5 . E5 . E5 . F5 . G5 - - . E5 . C5 .',
+        'A5 . A5 . A5 . G5 . F5 - - - . . . .',
+        'D5 . E5 . F5 . G5 . A5 . B5 . D6 . F6 .',
+        'E6 - - . D6 . B5 . C6 - - - - - . .',
+      ]),
+    },
+    // Elevator Bossa: smooth lounge music while dongs blow each other up
+    lounge: {
+      bpm: 104, swing: 0.2, root: [53, 50, 55, 48], kind: ['M', 'm', 'm', 'dom'],
+      kick: [0, 6, 8], snare: [3, 10, 13], hat: 2, bass: 'bossa', arp: 'chime', lead: 'whistle',
+      melody: parseMelody([
+        'A5 - - G5 . A5 . . C6 - - - A5 . . .',
+        'F5 - - E5 . F5 . . A5 - - - - - . .',
+        'D5 . F5 . A#5 - - . A5 . G5 . F5 . D5 .',
+        'E5 - - - - - . . G5 . E5 . C5 . . .',
+        'A5 - - G5 . A5 . . D6 - - - C6 . . .',
+        'A5 - - G5 . F5 . . D5 - - - - - . .',
+        'G5 . A5 . A#5 . D6 . C6 - - . A#5 . G5 .',
+        'F5 - - - - - - - . . . . . . . .',
+      ]),
+    },
+    // Shred Shaft: fast chiptune metal, double kick and chugging bass
+    metal: {
+      bpm: 168, swing: 0, root: [40, 40, 36, 38], kind: ['m', 'm', 'M', 'M'],
+      kick: [0, 2, 4, 6, 8, 10, 12, 14], snare: [4, 12], hat: 2, bass: 'chug', arp: 'run', lead: 'p25',
+      melody: parseMelody([
+        'E5 . G5 . A5 . B5 . E6 - - . D6 . B5 .',
+        'A5 . G5 . E5 . D5 . E5 - - - . . . .',
+        'E5 . G5 . A5 . B5 . C6 . B5 . A5 . G5 .',
+        'F#5 . G5 . A5 . F#5 . D5 - - - . . . .',
+        'B5 B5 . B5 B5 . A5 . G5 . A5 . B5 - - .',
+        'E6 . D6 . B5 . A5 . G5 . A5 . B5 . . .',
+        'C6 . B5 . A5 . G5 . A5 . G5 . F#5 . E5 .',
+        'D5 . F#5 . A5 . F#5 . E5 - - - - - - .',
+      ]),
+    },
+    // Sleazy Sax: slow late-night menu groove
+    sleaze: {
+      bpm: 92, swing: 0.3, root: [45, 45, 50, 52], kind: ['m', 'm', 'm', 'dom'],
+      kick: [0, 10], snare: [4, 12], hat: 2, bass: 'funk', arp: 'stab', lead: 'sax',
+      melody: parseMelody([
+        'A4 - - C5 . D5 . D#5 E5 - - - . . G5 .',
+        'E5 - - D5 . C5 . . A4 - - - - - . .',
+        'A4 - - C5 . D5 . D#5 E5 - - . G5 . A5 .',
+        'G5 - - E5 . D5 . . E5 - - - - - . .',
+        'D5 - - F5 . A5 . . C6 - - . A5 . F5 .',
+        'E5 - - - - - . . G#4 . B4 . E5 . . .',
+        'A4 - - C5 . E5 . . A5 - - . G5 . E5 .',
+        'D#5 E5 . C5 . A4 - - - - - - . . . .',
+      ]),
+    },
   };
   for (const [k, S] of Object.entries(SONGS)) if (S.melody.length !== 128) console.warn('song', k, 'has', S.melody.length, 'steps');
   const CHORD = { M: [0, 4, 7, 12], m: [0, 3, 7, 12], dom: [0, 4, 7, 10] };
@@ -186,7 +246,8 @@ const Sound = (() => {
     const root = S.root[bar], ch = CHORD[S.kind[bar]];
     const mel = S.melody[s % S.melody.length];
     if (mel) {
-      if (S.lead === 'whistle') tone(t, hz(mel.m), mel.len * sixteenth * 0.95, { wave: 'sine', gain: 0.2, dest: musicBus, vib: true, attack: 0.03, release: 0.06 });
+      if (S.lead === 'sax') tone(t, hz(mel.m - 12), mel.len * sixteenth * 0.95, { wave: 'sawtooth', gain: 0.16, lp: 1500, dest: musicBus, vib: mel.len >= 2, attack: 0.02, release: 0.08 });
+      else if (S.lead === 'whistle') tone(t, hz(mel.m), mel.len * sixteenth * 0.95, { wave: 'sine', gain: 0.2, dest: musicBus, vib: true, attack: 0.03, release: 0.06 });
       else tone(t, hz(mel.m), mel.len * sixteenth * 0.95, { wave: S.lead || 'p25', gain: 0.17, dest: musicBus, vib: mel.len >= 3, release: 0.04 });
     }
     if (mel && mel.len <= 2) tone(t + sixteenth * 1.5, hz(mel.m), mel.len * sixteenth * 0.8, { wave: 'p12', gain: 0.05, dest: musicBus });
@@ -198,6 +259,10 @@ const Sound = (() => {
     if (S.bass === 'oompah') {
       if (pos % 8 === 0) tone(t, hz(root - 12), sixteenth * 1.6, { wave: 'p50', gain: 0.24, lp: 800, dest: musicBus });
       if (pos % 8 === 4) tone(t, hz(root - 5), sixteenth * 1.6, { wave: 'p50', gain: 0.2, lp: 800, dest: musicBus });
+    } else if (S.bass === 'bossa') {
+      if ([0, 3, 6, 8, 11, 14].includes(pos)) tone(t, hz(root - 12 + (pos === 6 || pos === 14 ? 7 : 0)), sixteenth * 1.6, { wave: 'sine', gain: 0.32, dest: musicBus });
+    } else if (S.bass === 'chug') {
+      tone(t, hz(root - 12 + (pos === 14 ? 3 : pos === 15 ? 5 : 0)), sixteenth * 0.5, { wave: 'sawtooth', gain: 0.17, lp: 650, dest: musicBus });
     } else if (S.bass === 'gallop') {
       if (pos % 4 !== 1) tone(t, hz(root - 12 + (pos % 8 >= 4 ? 7 : 0)), sixteenth * 0.7, { wave: 'p50', gain: 0.22, lp: 900, dest: musicBus });
     } else if (S.bass === 'octave') {

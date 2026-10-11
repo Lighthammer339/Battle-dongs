@@ -372,3 +372,45 @@ function drawBackground(T, W, H, t) {
     g.drawImage(L, (L.width - off) * U, y, L.width * U, L.height * U);
   }
 }
+
+// ------------------------------------------------------------------ power-up crates + gravestones
+const CRATE_INFO = { health: { c: '#ff5a4a' }, ammo: { c: '#ffd84a' }, viagra: { c: '#5a9bff' } };
+const QMARK = ['0110', '1001', '0010', '0100', '0000', '0100'];
+const crateCache = {};
+function crateSprite(kind) {
+  if (crateCache[kind]) return crateCache[kind];
+  const W = 18, H = 16;
+  const edge = (x, y) => x === 0 || y === 0 || x === W - 1 || y === H - 1;
+  crateCache[kind] = spr(W, H, (x, y) => {
+    if (kind === 'health') {
+      if (edge(x, y)) return '#b8b8b0';
+      if ((Math.abs(x - 8.5) < 2.2 && y > 2 && y < 13) || (Math.abs(y - 7.5) < 2.2 && x > 3 && x < 14)) return x < 8 ? '#ff7a6a' : '#e8332a';
+      return x < 3 || y < 3 ? '#ffffff' : '#e8e8e0';
+    }
+    if (kind === 'ammo') {
+      const qx = Math.floor((x - 5) / 2), qy = Math.floor((y - 2) / 2);
+      if (qy >= 0 && qy < 6 && qx >= 0 && qx < 4 && QMARK[qy][qx] === '1') return '#ffd84a';
+      if (edge(x, y) || Math.abs(x - y * 1.1) < 1) return '#7a4e22';
+      return y % 5 === 4 ? '#8a5a2a' : x < 3 ? '#d09050' : '#b07838';
+    }
+    // viagra: a blue diamond pill on a blue box
+    if (edge(x, y)) return '#1f3d9c';
+    const d = Math.abs(x - 8.5) + Math.abs(y - 7.5) * 1.3;
+    if (d < 6) return d < 2.5 && x < 9 ? '#e8f4ff' : x < 9 ? '#9ad0ff' : '#6aaaf0';
+    return x < 3 ? '#5a9bff' : '#3a7be8';
+  });
+  return crateCache[kind];
+}
+let tombCache = null;
+function tombSprite() {
+  if (tombCache) return tombCache;
+  tombCache = spr(18, 24, (x, y) => {
+    if (y >= 21) return y === 21 ? '#8a8890' : '#5a5860';                       // slab
+    const shaft = (Math.abs(x - 8.5) < 4 && y >= 5 && y < 19) || ell(x, y, 8.5, 5.5, 4, 4.5) < 1;
+    const balls = ell(x, y, 4.5, 18, 4.5, 3.6) < 1 || ell(x, y, 12.5, 18, 4.5, 3.6) < 1;
+    if (!shaft && !balls) return null;
+    if (shaft && ((x === 8 || x === 9) && y > 5 && y < 15 || (y === 8 || y === 9) && x > 5 && x < 12)) return '#4a4850';   // engraved cross
+    return x < 7 ? '#b0aeb8' : x > 11 ? '#6a6872' : '#8e8c96';
+  });
+  return tombCache;
+}

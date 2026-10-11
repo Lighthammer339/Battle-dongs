@@ -25,6 +25,7 @@
 #  frag_speed   how hard fragments get thrown / hop height       (default 150)
 #  carve        yes/no - does the explosion dig into the ground  (default yes)
 #  shape        dirt only: ball or wall                          (default ball)
+#  direction    shove only: push (blast them away) or pull (suck them in)
 #  height       dirt walls only: wall height in pixels           (default 40)
 #  weight       how often it shows up in the draft, 0 = disabled (default 1)
 #  color        projectile + explosion color, like #ffd84a
@@ -57,6 +58,11 @@
 #  airstrike   marks the spot, then "count" bombs fall from the sky across
 #              "reach" px either side
 #  teleport    moves YOUR tank to wherever it lands. No damage.
+#  shove       explodes and shoves every dong within "reach" px sideways, up to
+#              "frag_speed" px (less the further away). direction = push / pull
+#
+#  HEALTH: everyone has 150. Run out and your dong dies - last one standing wins.
+#  Crates parachute in during the game: walk over one or shoot it to grab it.
 #
 #  SCORING: you get points for every point of damage you deal.
 #  Hitting yourself SUBTRACTS the damage from your own score.
@@ -398,3 +404,53 @@ look = pearl
 color = #c87aff
 weight = 1
 description = Teleports YOU to wherever it lands. Grab your pants on the way.
+
+
+# ============================== NEW AND NASTY ===============================
+
+[Kick in the Nuts]
+type = shove
+direction = push
+damage = 25
+radius = 14
+reach = 75
+frag_speed = 90
+look = nuts
+size = 5
+color = #ff9a1f
+description = Boots every dong nearby clean across the map. Great for pushing them off a ledge.
+
+[Suck It]
+type = shove
+direction = pull
+damage = 30
+radius = 18
+reach = 100
+frag_speed = 80
+look = drop
+size = 4
+color = #c27aff
+description = A vacuum of pure need. Sucks every dong nearby into the blast, then goes off.
+
+[Wet Dream]
+type = cluster
+damage = 15
+radius = 10
+count = 8
+spread = 60
+frag_speed = 120
+frag_damage = 9
+frag_radius = 8
+look = drop
+color = #8ac8ff
+description = Drips all over everything while you sleep. Nobody's proud of it.
+
+[Sloppy Seconds]
+type = stream
+count = 2
+delay = 0.55
+jitter = 1
+damage = 35
+radius = 16
+color = #e8e0c8
+description = Fires one, then comes back for a second go at the same spot.

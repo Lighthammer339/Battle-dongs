@@ -66,7 +66,7 @@ function groundAt(H, x) {
 
 // A drawable battlefield: terrain + tanks + effects. Used by the real game and the menu demo.
 function makeWorld(H, themeIdx, seed) {
-  return { H: Float32Array.from(H), disp: Float32Array.from(H), dirty: true, theme: getTheme(themeIdx, seed, WW, WH), props: [],
+  return { H: Float32Array.from(H), disp: Float32Array.from(H), dirty: true, theme: getTheme(themeIdx, seed, WW, WH), props: [], crates: [],
            tanks: [], fx: [], parts: [], fires: [], marks: [], texts: [], shake: 0 };
 }
 // every client derives the same environment from the terrain the server sent
@@ -91,7 +91,7 @@ function connect() {
     ws.onclose = () => {
       const was = App.connected;
       App.connected = false; App.ws = null; App.room = null; G = null;
-      if (was) { toast('DISCONNECTED FROM SERVER'); show('menu'); Sound.play('menu'); }
+      if (was) { toast('DISCONNECTED FROM SERVER'); show('menu'); Sound.play(MENU_SONG); }
     };
     ws.onmessage = e => onMessage(JSON.parse(e.data));
   });
@@ -111,7 +111,7 @@ function onMessage(m) {
     case 'left':
       App.room = null; G = null; closePause();
       if (App.screen === 'bye') break;
-      if (App.toMenu) { App.toMenu = false; show('menu'); Sound.play('menu'); } else show('lobby');
+      if (App.toMenu) { App.toMenu = false; show('menu'); Sound.play(MENU_SONG); } else show('lobby');
       break;
     case 'error': toast(m.msg.toUpperCase()); break;
     case 'chat': addChat(m); break;
@@ -123,6 +123,14 @@ function onMessage(m) {
     case 'shot': if (G) onShot(m); break;
     case 'over': if (G) onOver(m); break;
     case 'pause': if (G) onPause(m); break;
+    case 'crate':
+      if (G) {
+        G.world.crates.push({ ...m.crate, t0: now() });
+        floatText(G.world, 'SUPPLY DROP!', m.crate.x, 40, CRATE_INFO[m.crate.kind].c);
+        Sound.sfx('whistle');
+      }
+      break;
+    case 'picked': if (G) { onPick(G.world, m); applyState(m.state, false); updateHud(); } break;
   }
 }
 
@@ -140,19 +148,47 @@ function show(name) {
 const nick = $('#nick');
 try { nick.value = localStorage.getItem('battledongs.nick') || ''; } catch (e) {}
 
-document.addEventListener('pointerdown', () => { Sound.init(); Sound.play(G ? G.song : 'menu'); });
+const MENU_SONG = Math.random() < 0.5 ? 'menu' : 'sleaze';
+const BATTLE_POOL = ['march', 'lounge', 'metal', 'battle'];
+document.addEventListener('pointerdown', () => { Sound.init(); Sound.play(G ? G.song : MENU_SONG); });
+
+// ---- DOM text in the game's own 3x5 pixel font
+function pixLabel(el, text, o = {}) {
+  if (!el) return;
+  if (text == null) text = el.dataset.txt != null ? el.dataset.txt : el.textContent.trim();
+  text = String(text).toUpperCase().replace(/\s+/g, ' ');
+  el.dataset.txt = text;
+  el.setAttribute('aria-label', text);
+  const color = o.color || el.dataset.col || getComputedStyle(el).color;
+  el.dataset.col = color;
+  const px = o.px || +el.dataset.px || 2;
+  el.dataset.px = px;
+  const c = fontCanvas(text, o.style || el.dataset.st || 'plain', color);
+  el.dataset.st = o.style || el.dataset.st || 'plain';
+  c.className = 'pix';
+  c.style.width = c.width * px + 'px';
+  el.replaceChildren(c);
+}
+const setTxt = (el, t) => (el.dataset.txt != null ? pixLabel(el, t) : (el.textContent = t));
+function pixelizeUI() {
+  pixLabel($('.logo'), 'BATTLE DONGS', { px: 5, style: 'logo' });
+  pixLabel($('.tagline'), null, { px: 3, color: '#ffd84a' });
+  document.querySelectorAll('.foot, #menu label').forEach(el => pixLabel(el, null, { px: 2 }));
+  document.querySelectorAll('h2').forEach(el => pixLabel(el, null, { px: 3, style: 'outline', color: '#ffd84a' }));
+  document.querySelectorAll('.panel button:not(.arrow):not(.card)').forEach(el => el.closest('[id$="Seg"]') || pixLabel(el, null, { px: el.classList.contains('big') ? 4 : 3, style: 'flat' }));
+}
 document.addEventListener('click', e => { if (e.target.closest && e.target.closest('button')) Sound.sfx('click'); });
 
 function updateMusicLabels() {
-  $('#btnMusic').textContent = 'MUSIC: ' + (Sound.musicOn ? 'ON' : 'OFF');
+  setTxt($('#btnMusic'), 'MUSIC: ' + (Sound.musicOn ? 'ON' : 'OFF'));
   $('#muteBtn').classList.toggle('off', !Sound.musicOn);
-  $('#btnPauseMusic').textContent = 'MUSIC: ' + (Sound.musicOn ? 'ON' : 'OFF');
+  setTxt($('#btnPauseMusic'), 'MUSIC: ' + (Sound.musicOn ? 'ON' : 'OFF'));
 }
 $('#btnMusic').onclick = $('#muteBtn').onclick = () => { Sound.init(); Sound.setMusic(!Sound.musicOn); updateMusicLabels(); };
 updateMusicLabels();
 
 $('#btnPlay').onclick = async () => {
-  Sound.init(); Sound.play('menu');
+  Sound.init(); Sound.play(MENU_SONG);
   const name = nick.value.trim() || 'Dong' + Math.floor(Math.random() * 900 + 100);
   nick.value = name;
   try { localStorage.setItem('battledongs.nick', name); } catch (e) {}
@@ -164,7 +200,7 @@ $('#btnPlay').onclick = async () => {
   } catch (err) { toast(err.message.toUpperCase(), 5000); }
 };
 nick.addEventListener('keydown', e => { if (e.key === 'Enter') $('#btnPlay').click(); });
-$('#btnHow').onclick = () => { Sound.init(); Sound.play('menu'); show('how'); };
+$('#btnHow').onclick = () => { Sound.init(); Sound.play(MENU_SONG); show('how'); };
 document.querySelectorAll('.back').forEach(b => (b.onclick = () => show('menu')));
 
 // lobby
@@ -196,7 +232,7 @@ function renderRoomList(rooms) {
 function renderRoom() {
   const r = App.room; if (!r) return;
   const host = r.host === App.myId;
-  $('#roomTitle').textContent = r.name.toUpperCase();
+  setTxt($('#roomTitle'), r.name.toUpperCase());
   $('#roomCode').textContent = r.code;
   document.querySelectorAll('.hostonly').forEach(e => (e.hidden = !host));
   document.querySelectorAll('.guestonly').forEach(e => (e.hidden = host));
@@ -254,7 +290,7 @@ function addChat(m) {
 
 $('#btnBackRoom').onclick = () => {
   G = null;
-  Sound.play('menu');
+  Sound.play(MENU_SONG);
   if (App.room) { show('room'); renderRoom(); } else show('lobby');
 };
 
@@ -270,10 +306,10 @@ function startGame(m) {
     world, players: new Map(), order: m.players.map(p => p.id),
     powers: new Map(m.powers.map(p => [p.name, p])),
     phase: 'draft', cur: null, deadline: 0, turnN: 0, replay: null, draft: null,
-    w: 0, banner: null, lastAimSent: 0, aimTimer: null, hpMax: m.hp || 250, face: 1, song: world.theme.song,
+    w: 0, banner: null, lastAimSent: 0, aimTimer: null, hpMax: m.hp || 150, face: 1, song: [world.theme.song, ...BATTLE_POOL][seed % (BATTLE_POOL.length + 1)],
   };
   for (const p of m.players) {
-    const t = { ...p, x: 0, y: 0, dx: 0, dy: 0, da: 45, angle: 45, power: 60, w: 0, score: 0, taken: 0, moves: 4, inv: [], gone: false,
+    const t = { ...p, x: 0, y: 0, dx: 0, dy: 0, da: 45, angle: 45, power: 60, w: 0, score: 0, taken: 0, dead: false, boost: false, slide: false, moves: 4, inv: [], gone: false,
                 flash: 0, roll: 0, wood: 1, recoil: 0, charging: false, chargeT0: 0, lastPow: null };
     G.players.set(p.id, t);
     world.tanks.push(t);
@@ -293,10 +329,11 @@ function applyState(s, snap) {
     const p = G.players.get(t.id);
     if (!p) continue;
     const keepAim = p.id === App.myId && myTurn();
-    Object.assign(p, { x: t.x, y: t.y, score: t.score, taken: t.taken || 0, moves: t.moves, inv: t.inv, gone: t.gone });
+    Object.assign(p, { x: t.x, y: t.y, score: t.score, taken: t.taken || 0, dead: !!t.dead, boost: !!t.boost, moves: t.moves, inv: t.inv, gone: t.gone });
     if (!keepAim) { p.angle = t.angle; p.power = t.power; }
     if (snap) { p.dx = t.x; p.dy = t.y; p.da = t.angle; }
   }
+  if (s.crates) W.crates = s.crates.map(c => { const old = W.crates.find(o => o.id === c.id); return { ...c, t0: old ? old.t0 : 0 }; });
   W.H = Float32Array.from(s.H);
   if (snap) W.disp = Float32Array.from(s.H);
   W.dirty = true;
@@ -380,13 +417,13 @@ function openPause() {
   stopCharge();
   dragging = false;
   $('#btnToMenu').hidden = App.screen === 'menu';
-  $('#btnResume').textContent = pausable() ? 'RESUME' : 'BACK';
+  setTxt($('#btnResume'), pausable() ? 'RESUME' : 'BACK');
   if (pausable() && !G.paused) {
     send({ t: 'pause', on: true });
-    $('#pauseTitle').textContent = 'PAUSED';
+    setTxt($('#pauseTitle'), 'PAUSED');
     $('#pauseInfo').textContent = 'Game paused for everyone.';
   } else if (!pausable()) {
-    $('#pauseTitle').textContent = 'MENU';
+    setTxt($('#pauseTitle'), 'MENU');
     $('#pauseInfo').textContent = '';
   }
   updateMusicLabels();
@@ -400,7 +437,7 @@ function onPause(m) {
   if (m.on) {
     G.paused = true; G.pausedAt = now();
     openPause();
-    $('#pauseTitle').textContent = 'PAUSED';
+    setTxt($('#pauseTitle'), 'PAUSED');
     $('#pauseInfo').textContent = m.id === App.myId ? 'Game paused for everyone.' : `${m.by.toUpperCase()} PAUSED THE GAME. Anyone can resume.`;
   } else {
     // restart the clocks from what the server says is left
@@ -416,7 +453,7 @@ $('#btnPauseMusic').onclick = () => { Sound.init(); Sound.setMusic(!Sound.musicO
 $('#btnToMenu').onclick = () => {
   closePause();
   if (App.room) { App.toMenu = true; send({ t: 'leave' }); }
-  else { G = null; show('menu'); Sound.play('menu'); }
+  else { G = null; show('menu'); Sound.play(MENU_SONG); }
 };
 $('#btnQuit').onclick = () => {
   closePause();
@@ -508,12 +545,12 @@ function onOver(m) {
   ol.innerHTML = '';
   for (const r of m.ranking) {
     const li = document.createElement('li');
-    li.textContent = `${r.name}  -  ${r.score}${r.gone ? ' (LEFT)' : ''}`;
+    li.textContent = `${r.name}  -  ${r.score}${r.gone ? ' (LEFT)' : r.dead ? ' (DEAD)' : ''}`;
     li.style.color = PLAYER_COLORS[r.color].css;
     ol.appendChild(li);
   }
   const won = m.winner && m.winner.id === App.myId;
-  $('#overTitle').textContent = m.winner ? (won ? 'YOU WIN!' : `${m.winner.name.toUpperCase()} WINS!`) : "IT'S A TIE!";
+  setTxt($('#overTitle'), m.winner ? (won ? 'YOU WIN!' : `${m.winner.name.toUpperCase()} WINS!`) : "IT'S A TIE!");
   Sound.sfx(won ? 'win' : 'lose');
   setTimeout(() => { if (G && G.phase === 'over') show('over'); }, 1200);
 }
@@ -567,6 +604,30 @@ function runEvent(W, e) {
     }
     case 'fire': W.fires.push({ xs: e.xs, c: e.c, t0: now(), dur: 2200 }); sfx('sizzle'); break;
     case 'mark': W.marks.push({ x: e.x, t0: now(), c: e.c }); sfx('whistle'); break;
+    case 'die': {
+      if (!G || W !== G.world) break;
+      const v = G.players.get(e.id), by = G.players.get(e.by);
+      if (!v) break;
+      v.dead = true;
+      if (by && e.bonus) by.score += e.bonus;
+      const vy = WH - v.dy - 8;
+      burst(W, v.dx, vy, SKIN, 30, 120); burst(W, v.dx, vy, '#ff5a4a', 18, 100); burst(W, v.dx, vy, '#fffbe8', 14, 150);
+      floatText(W, e.bonus ? `KILL +${e.bonus}` : 'R.I.P.', v.dx, vy - 26, by ? css(by) : '#ff5a4a');
+      banner(`${v.name.toUpperCase()} GOT DICKED!`, 2000, '#ff5a4a');
+      W.shake = 8;
+      sfx('death');
+      updateHud();
+      break;
+    }
+    case 'pick': onPick(W, e); break;
+    case 'shove': {
+      if (!G || W !== G.world) break;
+      const p = G.players.get(e.id);
+      if (!p || Math.abs(p.x - e.x) < 0.5) break;
+      p.x = e.x; p.y = e.y; p.slide = true;
+      sfx('boing');
+      break;
+    }
     case 'tp': {
       if (!G || W !== G.world) break;
       const p = G.players.get(e.id);
@@ -578,6 +639,23 @@ function runEvent(W, e) {
       break;
     }
   }
+}
+
+// a crate got grabbed (by walking over it or by shooting it)
+function onPick(W, e) {
+  if (!G || W !== G.world) return;
+  const i = W.crates.findIndex(c => c.id === e.cid), c = i >= 0 ? W.crates.splice(i, 1)[0] : null;
+  const p = G.players.get(e.id);
+  if (!p) return;
+  const col = CRATE_INFO[e.kind].c;
+  if (c) { const cy = WH - W.disp[clamp(Math.floor(c.x), 0, WW - 1)] - 4; burst(W, c.x, cy, col, 18, 90); burst(W, c.x, cy, '#b07838', 8, 70); }
+  let txt;
+  if (e.kind === 'health') { p.taken = Math.max(0, p.taken - e.n); txt = `+${e.n} HP`; }
+  else if (e.kind === 'ammo') { txt = `+ ${e.name}`; if (p.id === App.myId && !p.inv.includes(e.name)) p.inv.push(e.name); }
+  else { p.boost = true; txt = 'VIAGRA! NEXT SHOT X1.5'; }
+  floatText(W, txt.toUpperCase(), p.dx, WH - p.dy - 54, col);
+  if (!W.silent) Sound.sfx('pickup');
+  updateHud();
 }
 
 function burst(W, x, y, c, n, spd) {
@@ -597,10 +675,11 @@ function updateHud() {
   sc.innerHTML = '';
   for (const id of G.order) {
     const p = G.players.get(id), d = document.createElement('div');
-    d.className = 'sc' + (G.cur === id ? ' cur' : '') + (p.gone ? ' gone' : '');
+    d.className = 'sc' + (G.cur === id ? ' cur' : '') + (p.gone || p.dead ? ' gone' : '');
     const n = document.createElement('span'); n.textContent = p.name.toUpperCase(); n.style.color = css(p);
     const s = document.createElement('span'); s.textContent = p.score;
-    const w = document.createElement('small'); w.textContent = `${p.inv.length} LEFT`;
+    const w = document.createElement('small');
+    w.textContent = p.dead ? 'R.I.P.' : `${Math.max(0, Math.round(G.hpMax - p.taken))}HP ${p.inv.length}W${p.boost ? ' V!' : ''}`;
     d.append(n, w, s);
     sc.appendChild(d);
   }
@@ -836,15 +915,15 @@ function stepWorld(W, dt) {
   if (moving) W.dirty = true;
   for (const p of W.tanks) {
     if (p.gone) continue;
-    if (Math.abs(p.dx - p.x) > 0.5) {   // driving
-      const d = Math.sign(p.x - p.dx) * Math.min(Math.abs(p.x - p.dx), 45 * dt);
-      p.dx += d; p.roll += d * 2;
-    } else p.dx = p.x;
+    if (Math.abs(p.dx - p.x) > 0.5) {   // walking (or getting shoved)
+      const d = Math.sign(p.x - p.dx) * Math.min(Math.abs(p.x - p.dx), (p.slide ? 230 : 45) * dt);
+      p.dx += d; if (!p.slide) p.roll += d * 2;
+    } else { p.dx = p.x; p.slide = false; }
     const target = groundAt(W.disp, p.dx);
     p.dy = p.dy > target ? Math.max(target, p.dy - 150 * dt) : target;
     let diff = p.angle - p.da;
     p.da += diff * Math.min(1, dt * 12);
-    const wt = G && W === G.world ? woodOf(p) : (p.woodT == null ? 1 : p.woodT);
+    const wt = p.dead ? 0 : G && W === G.world ? woodOf(p) : (p.woodT == null ? 1 : p.woodT);
     p.wood = (p.wood == null ? 1 : p.wood) + (wt - (p.wood == null ? 1 : p.wood)) * Math.min(1, dt * 1.2);
     p.recoil = Math.max(0, (p.recoil || 0) - dt * 3.5);
     stepIdle(W, p);
@@ -859,15 +938,16 @@ function stepWorld(W, dt) {
 function woodOf(p) {
   const health = clamp(1 - p.taken / G.hpMax, 0, 1);
   let lead = null;
-  for (const o of G.players.values()) if (o !== p && !o.gone && (lead === null || o.score > lead)) lead = o.score;
+  for (const o of G.players.values()) if (o !== p && !o.gone && !o.dead && (lead === null || o.score > lead)) lead = o.score;
   const behind = lead === null ? 0 : Math.max(0, lead - p.score);
-  return health * (1 - 0.6 * clamp(behind / 120, 0, 1));
+  // stays rock hard down to ~80% health; only really wilts when hurt badly or way behind
+  return clamp((health * (1 - 0.35 * clamp(behind / 150, 0, 1)) - 0.1) / 0.7, 0, 1);
 }
 
 // idle fidgets: every few seconds a dong that isn't busy does a random little routine
 function stepIdle(W, p) {
   const t = now();
-  const busy = Math.abs(p.dx - p.x) > 0.5 || p.flash > t || (G && W === G.world && G.cur === p.id && G.phase !== 'over')
+  const busy = p.dead || Math.abs(p.dx - p.x) > 0.5 || p.flash > t || (G && W === G.world && G.cur === p.id && G.phase !== 'over')
     || (demo.proj && demo.proj.me === p);
   if (busy) { p.idle = null; if (!p.idleNext || p.idleNext < t + 1200) p.idleNext = t + 1200 + Math.random() * 2500; return; }
   if (p.idle) {
@@ -922,12 +1002,31 @@ function drawWorld(W, t, extra) {
     for (let y = gy - 6; y > 0; y -= 5) if (Math.random() > k) px(m.x - U / 2, y, 1, kp(5), mc);
     disk(m.x, gy - 2, 2.5, OUT); disk(m.x, gy - 2, 2, '#ff5a4a'); disk(m.x, gy - 2, 1, '#ffd84a');
   }
+  for (const c of W.crates) {
+    const gy = WH - W.disp[clamp(Math.floor(c.x), 0, WW - 1)], img = crateSprite(c.kind), k = c.t0 ? clamp((t - c.t0) / 1700, 0, 1) : 1;
+    const y = k < 1 ? lerp(-12, gy, k) : gy, x = c.x + (k < 1 ? Math.sin(t / 260) * 3 * (1 - k) : 0);
+    if (k < 1) {   // parachute
+      const cy = y - img.height * U - 10;
+      for (let i = -7; i <= 7; i++) {
+        const h = Math.sqrt(49 - i * i) * 0.8;
+        px(x + i, cy - h - U, 1, 1, OUT);
+        px(x + i, cy - h, 1, Math.max(1, Math.round(h * RES)), ((i + 7) >> 1) % 2 ? '#e8433a' : '#fffbe8');
+      }
+      for (let j = 0; j < 8; j++) { px(x - 7 + j * 0.8, cy + j * 1.1, 1, 1, '#c8c0b0'); px(x + 7 - j * 0.8, cy + j * 1.1, 1, 1, '#c8c0b0'); }
+    } else if (((t / 400) | 0) % 2) px(x - U / 2, y - img.height * U - 3, 1, kp(2), CRATE_INFO[c.kind].c);   // blinky beacon
+    blit(img, x - img.width * U / 2, y - img.height * U + U);
+  }
   for (const p of W.tanks) {
     if (p.gone) continue;
+    if (p.dead) {
+      const img = tombSprite();
+      blit(img, p.dx - img.width * U / 2, WH - p.dy - img.height * U + U);
+      continue;
+    }
     const ch = G && W === G.world ? chargeOf(p) / 100 : 0;
     p.tip = drawTank(p.dx, WH - p.dy, p.da, p.color, t, {
       flash: p.flash > t, walk: p.roll, erect: p.wood,
-      idle: p.idle ? { k: p.idle.k, p: clamp((t - p.idle.t0) / IDLES[p.idle.k].dur, 0, 1) } : null, face: G && W === G.world && p.id === App.myId && G.cur === p.id ? G.face : 0, recoil: p.recoil, charge: ch, moving: Math.abs(p.dx - p.x) > 0.5,
+      idle: p.idle ? { k: p.idle.k, p: clamp((t - p.idle.t0) / IDLES[p.idle.k].dur, 0, 1) } : null, face: G && W === G.world && p.id === App.myId && G.cur === p.id ? G.face : 0, recoil: p.recoil, charge: ch, moving: Math.abs(p.dx - p.x) > 0.5 && !p.slide,
     });
   }
   if (extra) extra(t);
@@ -1010,7 +1109,12 @@ function drawGameOverlay(t) {
   for (const p of G.world.tanks) {
     if (p.gone) continue;
     const sx = Math.round(p.dx), sy = Math.round(WH - p.dy);
+    if (p.dead) { pixText(p.name, sx, sy - 22, '#8a8890', { align: 'center' }); continue; }
     pixText(p.name, sx, sy - 46, css(p), { align: 'center' });
+    if (p.boost) {   // viagra pill next to the name
+      const bx = sx + textWidth(p.name) / 2 + 3;
+      px(bx - U, sy - 47, kp(8) + 2, kp(5) + 2, OUT); px(bx, sy - 46, kp(8), kp(5), '#5a9bff'); px(bx, sy - 46, kp(4), 1, '#9ad0ff');
+    }
     const hp = clamp(1 - p.taken / G.hpMax, 0, 1), bw = kp(44), bh = kp(4), fill = Math.round(bw * hp), bx = sx - bw * U / 2, by = sy - 39;
     const hc = hp > 0.6 ? ['#5ae86a', '#b0ffb8', '#2a9a3a'] : hp > 0.3 ? ['#ffd84a', '#fff0a0', '#c89a1a'] : ['#ff5a4a', '#ffa090', '#a82a22'];
     px(bx - U, by - U, bw + 2, bh + 2, OUT);
@@ -1161,5 +1265,7 @@ function frame(t) {
   }
 }
 
+pixelizeUI();
+updateMusicLabels();
 show('menu');
 requestAnimationFrame(frame);

@@ -48,7 +48,13 @@ PIVOT = 12                     # barrel pivot height above the ground
 BARREL = 14
 AIM_MIN, AIM_MAX = -45, 225   # worms-style aim: up to 45 degrees below the horizon on either side
 CHARGE_SEC = 1.6               # seconds to charge from 0 to full power (clients use the same)
-HP_PER_WEAPON = 25             # health pool = this x weapons per player (health is cosmetic: it sets the wood)
+HP_MAX = 150                   # health; hit 0 and your dong dies (blast + gravestone) and is out of the game
+KILL_BONUS = 25                # score bonus for finishing someone off
+CRATE_CHANCE = 0.4             # chance a power-up crate parachutes in at the start of a turn
+CRATE_MAX = 3                  # most crates lying around at once
+CRATE_KINDS = (("health", 4), ("ammo", 4), ("viagra", 3))
+HEAL = 40                      # health crate
+VIAGRA_MULT = 1.5              # damage multiplier for the next shot after a viagra crate
 
 BOT_NAMES = ["Richard", "Big Johnson", "Willy", "Peter", "Moby", "Sir Longfellow",
              "Wang Chung", "Little Jimmy", "Captain Wood", "Shlongo"]
@@ -65,7 +71,7 @@ def clamp(v, a, b):
 # --------------------------------------------------------------------------- powers.txt
 
 TYPES = ("shot", "spread", "stream", "split", "cluster", "roller", "bouncer", "jackhammer", "teabag",
-         "digger", "dirt", "napalm", "seeker", "airstrike", "teleport")
+         "digger", "dirt", "napalm", "seeker", "airstrike", "teleport", "shove")
 LOOKS = ("glob", "ball", "nuts", "drop", "pearl", "rocket", "dirt", "probe")
 NUM_KEYS = {   # key: (default, min, max)
     "damage": (30, 0, 500), "radius": (16, 0, 120), "count": (1, 1, 30), "spread": (6, 0, 90),
@@ -73,7 +79,7 @@ NUM_KEYS = {   # key: (default, min, max)
     "gravity": (1, 0, 4), "frag_damage": (10, 0, 500), "frag_radius": (8, 0, 120),
     "frag_speed": (150, 10, 600), "height": (40, 1, 250), "weight": (1, 0, 100), "size": (3, 1, 16),
 }
-STR_KEYS = {"type": "shot", "color": "#fffbe8", "look": "glob", "shape": "ball", "carve": "yes",
+STR_KEYS = {"type": "shot", "color": "#fffbe8", "look": "glob", "shape": "ball", "carve": "yes", "direction": "push",
             "description": ""}
 FALLBACK = [{**{k: v[0] for k, v in NUM_KEYS.items()}, **STR_KEYS, "name": "Single Squirt", "carve": True}]
 
@@ -111,6 +117,7 @@ def load_powers():
         if p["look"] not in LOOKS:
             p["look"] = "glob"
         p["carve"] = p["carve"].lower() not in ("no", "false", "0", "off")
+        p["direction"] = "pull" if p["direction"].lower() in ("pull", "suck", "in") else "push"
         p["count"] = int(p["count"])
         p["description"] = p["description"][:160]
         if not bad:
@@ -177,8 +184,9 @@ def ground_at(H, x):
 class Shot:
     """Simulates one turn's shot and records a replay for the clients."""
 
-    def __init__(self, game, me, spec, angle, power):
+    def __init__(self, game, me, spec, angle, power, mult=1.0):
         self.game, self.me, self.spec = game, me, spec
+        self.mult = mult
         self.angle, self.power = angle, power
         self.H = game.H
         self.t = 0.0
@@ -280,12 +288,24 @@ class Shot:
 
     def collide(self, p):
         x, y = p["x"], p["y"]
+        for c in list(self.game.crates):      # shoot a crate to grab it
+            if math.hypot(c["x"] - x, c["y"] + 4 - y) < 7:
+                self.game.collect(c, self.me, self)
         rising_hop = p["mode"] == "hop" and p["vy"] > 0     # don't re-hit the tank we just left
         tank = None if rising_hop else self.game.tank_at(x, y, skip=self.me if p["age"] < 0.25 else None)
         if tank:
             self.impact(p, tank)
         elif 0 <= x < WW and y <= self.H[int(x)]:
-            p["y"] = self.H[int(x)]
+            # walk back along this step to the point where it actually went in. Snapping straight up to the
+            # column's surface made shells that hit the side of a hill explode on top of it instead.
+            px, py = x - p["vx"] * DT, y - p["vy"] * DT
+            for k in range(1, 9):
+                f = k / 8
+                qx, qy = px + (x - px) * f, py + (y - py) * f
+                if 0 <= qx < WW and qy <= self.H[int(qx)]:
+                    x, y = qx, qy
+                    break
+            p["x"], p["y"] = x, y
             self.impact(p, None)
         elif x < -40 or x > WW + 40 or y < -40 or p["age"] > 14:
             self.finish(p)
@@ -379,6 +399,16 @@ class Shot:
             p["y"] = max(y, self.H[int(p["x"])]) + 1
             return
 
+        if typ == "shove":
+            if s["direction"] == "pull":
+                self.shove(x, y, s, -1)
+                self.explode(x, y, s["radius"], s["damage"], s["color"], s["carve"])
+            else:
+                self.explode(x, y, s["radius"], s["damage"], s["color"], s["carve"])
+                self.shove(x, y, s, 1)
+            self.finish(p)
+            return
+
         if typ == "teabag":
             # donkey-bomb style: slam, then float straight back up over the same spot and slam again
             if p["mode"] != "hop":
@@ -432,6 +462,9 @@ class Shot:
         self.emit("boom", x=r1(x), y=r1(y), r=r, c=color, carve=bool(do_carve))
         if do_carve and r > 0:
             carve(self.H, x, y, r)
+        for c in list(self.game.crates):      # blowing a crate up also gets you what's inside
+            if math.hypot(c["x"] - x, c["y"] + 4 - y) < r + 5:
+                self.game.collect(c, self.me, self)
         if dmg > 0:
             for tk in self.game.active():
                 d = math.hypot(x - tk["x"], y - (tk["y"] + 6))
@@ -441,13 +474,42 @@ class Shot:
                     self.hurt(tk, round(dmg * (0.3 + 0.7 * clamp(frac, 0, 1))))
         self.game.settle()
 
+    def shove(self, x, y, s, sign):
+        moved = False
+        for tk in self.game.active():
+            d = math.hypot(tk["x"] - x, tk["y"] + 6 - y)
+            if d >= s["reach"]:
+                continue
+            amt = s["frag_speed"] * (1 - d / s["reach"])
+            side = (1 if tk["x"] >= x else -1) if abs(tk["x"] - x) > 0.5 else random.choice((-1, 1))
+            if sign < 0:
+                amt = min(amt, max(0.0, abs(tk["x"] - x) - 2))
+            nx = clamp(tk["x"] + side * sign * amt, 10, WW - 10)
+            if abs(nx - tk["x"]) < 1:
+                continue
+            tk["x"] = nx
+            moved = True
+        if moved:
+            self.game.settle()
+            for tk in self.game.active():
+                self.emit("shove", id=tk["id"], x=r1(tk["x"]), y=r1(tk["y"]))
+
     def hurt(self, tk, amt):
-        if amt <= 0:
+        if amt <= 0 or tk.get("dead"):
             return
         own = tk is self.me
+        if not own:
+            amt = round(amt * self.mult)
         self.me["score"] += -amt if own else amt
         tk["taken"] += amt
         self.emit("dmg", id=tk["id"], by=self.me["id"], n=amt, own=own)
+        if tk["taken"] >= HP_MAX:
+            tk["dead"] = True
+            bonus = 0 if own else KILL_BONUS
+            self.me["score"] += bonus
+            self.emit("die", id=tk["id"], by=self.me["id"], bonus=bonus)
+            x, y = tk["x"], tk["y"] + 4
+            self.later(0.45, lambda: self.explode(x, y, 18, 20, "#fffbe8", True))   # goes out with a bang
 
     def dig(self, p):
         s = p["spec"]
@@ -498,6 +560,7 @@ class Game:
         self.by_name = {p["name"]: p for p in self.powers}
         self.players = {}
         self.turn_n = 0
+        self.crates, self.crate_n = [], 0
         self.current = None
         self.phase = "draft"
         self.fire_req = None
@@ -522,7 +585,7 @@ class Game:
         for m, x in zip(members, xs):
             self.players[m["id"]] = {
                 "id": m["id"], "name": m["name"], "color": m["color"], "bot": m["bot"],
-                "x": x, "y": 0.0, "score": 0, "taken": 0, "moves": MOVES, "inv": [], "gone": False,
+                "x": x, "y": 0.0, "score": 0, "taken": 0, "dead": False, "boost": False, "moves": MOVES, "inv": [], "gone": False,
                 "angle": 45 if x < WW / 2 else 135, "power": 60, "w": 0,
             }
         self.order = list(self.players.values())
@@ -530,11 +593,51 @@ class Game:
 
     # ---- helpers
     def active(self):
-        return [p for p in self.players.values() if not p["gone"]]
+        return [p for p in self.players.values() if not p["gone"] and not p["dead"]]
 
     def settle(self):
         for p in self.players.values():
             p["y"] = ground_at(self.H, p["x"])
+        for c in self.crates:
+            c["y"] = self.H[int(clamp(c["x"], 0, WW - 1))]
+
+    # ---- power-up crates
+    def maybe_crate(self):
+        if len(self.crates) >= CRATE_MAX or random.random() > CRATE_CHANCE:
+            return
+        for _ in range(30):
+            x = random.uniform(20, WW - 20)
+            if all(abs(x - p["x"]) > 28 for p in self.active()) and all(abs(x - c["x"]) > 20 for c in self.crates):
+                break
+        else:
+            return
+        self.crate_n += 1
+        kind = random.choices([k for k, _ in CRATE_KINDS], [w for _, w in CRATE_KINDS])[0]
+        c = {"id": self.crate_n, "x": r1(x), "y": r1(self.H[int(x)]), "kind": kind}
+        self.crates.append(c)
+        self.room.broadcast({"t": "crate", "crate": c})
+
+    def collect(self, c, p, shot=None):
+        if c not in self.crates or p.get("dead"):
+            return
+        self.crates.remove(c)
+        info = {}
+        if c["kind"] == "health":
+            heal = min(HEAL, p["taken"])
+            p["taken"] -= heal
+            info["n"] = heal
+        elif c["kind"] == "ammo":
+            pool = [q for q in self.powers if q.get("weight", 1) > 0] or self.powers
+            name = random.choices([q["name"] for q in pool], [max(0.01, q.get("weight", 1)) for q in pool])[0]
+            p["inv"].append(name)
+            info["name"] = name
+        else:
+            p["boost"] = True
+        ev = {"cid": c["id"], "id": p["id"], "kind": c["kind"], **info}
+        if shot:
+            shot.emit("pick", **ev)
+        else:
+            self.room.broadcast({"t": "picked", **ev, "state": self.state()})
 
     def tank_at(self, x, y, skip=None):
         for p in self.active():
@@ -549,8 +652,9 @@ class Game:
     def state(self):
         return {
             "tanks": [{k: (r1(p[k]) if k in ("x", "y") else p[k])
-                       for k in ("id", "x", "y", "score", "taken", "moves", "inv", "gone", "angle", "power")}
+                       for k in ("id", "x", "y", "score", "taken", "dead", "boost", "moves", "inv", "gone", "angle", "power")}
                       for p in self.players.values()],
+            "crates": self.crates,
             "H": [r1(h) for h in self.H],
         }
 
@@ -599,7 +703,7 @@ class Game:
             room.broadcast({"t": "gameStart", "turnSec": room.turn_sec, "W": WW, "H": WH,
                             "physics": {"g": G, "vmax": VMAX, "pivot": PIVOT, "barrel": BARREL,
                                         "aimMin": AIM_MIN, "aimMax": AIM_MAX, "charge": CHARGE_SEC},
-                            "hp": HP_PER_WEAPON * room.weapons,
+                            "hp": HP_MAX,
                             "players": [{k: p[k] for k in ("id", "name", "color", "bot")} for p in self.order],
                             "powers": self.powers, "draft": room.draft, "state": self.state()})
             await asyncio.sleep(1.0)
@@ -613,7 +717,7 @@ class Game:
                     break
                 p = self.order[k % len(self.order)]
                 k += 1
-                if p["gone"] or not p["inv"]:
+                if p["gone"] or p["dead"] or not p["inv"]:
                     continue
                 await self.gate()
                 await self.take_turn(p)
@@ -628,6 +732,7 @@ class Game:
 
     async def take_turn(self, p):
         self.turn_n += 1
+        self.maybe_crate()
         self.current = p["id"]
         self.fire_req = None
         self.fired.clear()
@@ -648,7 +753,9 @@ class Game:
         p["angle"], p["power"] = req["angle"], req["power"]
         p["w"] = 0
         spec = self.by_name.get(name, FALLBACK[0])
-        res = Shot(self, p, spec, req["angle"], req["power"]).run()
+        mult = VIAGRA_MULT if p["boost"] else 1.0
+        p["boost"] = False
+        res = Shot(self, p, spec, req["angle"], req["power"], mult).run()
         self.room.broadcast({"t": "shot", "id": p["id"], "weapon": name, "angle": req["angle"],
                              "power": req["power"], **res, "after": self.state()})
         await asyncio.sleep(res["dur"] + 1.6)
@@ -754,6 +861,10 @@ class Game:
         p["moves"] -= 1
         self.settle()
         self.room.broadcast({"t": "moved", "id": pid, "x": r1(x), "y": r1(p["y"]), "moves": p["moves"]})
+        lo, hi = min(x0, x) - 10, max(x0, x) + 10
+        for c in list(self.crates):
+            if lo <= c["x"] <= hi:
+                self.collect(c, p)
 
     def forfeit(self, pid):
         p = self.players.get(pid)
@@ -768,14 +879,15 @@ class Game:
                 self.pick_evt.set()
 
     def finish(self):
-        ranking = sorted(self.players.values(), key=lambda p: (not p["gone"], p["score"]), reverse=True)
-        top = [p for p in ranking if not p["gone"]]
+        ranking = sorted(self.players.values(), key=lambda p: (not p["gone"], not p["dead"], p["score"]), reverse=True)
+        alive = [p for p in ranking if not p["gone"] and not p["dead"]]
+        top = alive or [p for p in ranking if not p["gone"]]
         winner = top[0] if top and (len(top) < 2 or top[0]["score"] > top[1]["score"]) else None
         self.room.broadcast({
             "t": "over",
             "winner": {"id": winner["id"], "name": winner["name"], "color": winner["color"]} if winner else None,
             "ranking": [{"id": p["id"], "name": p["name"], "color": p["color"], "score": p["score"],
-                         "gone": p["gone"]} for p in ranking],
+                         "gone": p["gone"], "dead": p["dead"]} for p in ranking],
         })
         self.room.game = None
         self.room.state = "lobby"

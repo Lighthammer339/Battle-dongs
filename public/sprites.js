@@ -99,7 +99,8 @@ const FONT = {
   ':': '000010000010000', '-': '000000111000000', '+': '000010111010000', '/': '001001010100100', "'": '010010000000000',
   '(': '001010010010001', ')': '100010010010100', '%': '101001010100101', '>': '100010001010100', '<': '001010100010001',
   '=': '000111000111000', '*': '101010101000000', '#': '101111101111101', '[': '011010010010011', ']': '110010010010110',
-  '_': '000000000000111', '&': '010101010101011', ' ': '000000000000000',
+  '_': '000000000000111', '&': '010101010101011', ' ': '000000000000000', '~': '000110011000000', '·': '000000010000000',
+  '"': '101101000000000', ';': '000010000010100', '$': '011110010011110', '@': '010101111100011',
 };
 const textWidth = (s, scale = 1) => (s.length * 4 - 1) * scale;
 
@@ -419,8 +420,8 @@ function drawTank(sx, sy, ang, color, t, o = {}) {
   const sway = limp * 0.12 * Math.sin(t / 650 + color);
   const beat = (t % 1000) < 110 ? 1 : 0;                   // heartbeat throb
   const shake = (o.charge || 0) * 0.8;
-  const L = (9 + 6 * e) * RES * (1 - 0.3 * (o.recoil || 0)) * s.lenMul;
-  const R0 = (2.2 + 0.4 * e) * RES + beat * e * 0.5 * K;
+  const L = (10 + 7 * e) * RES * (1 - 0.3 * (o.recoil || 0)) * s.lenMul;
+  const R0 = (2.2 + 0.6 * e) * RES + beat * e * 0.5 * K;
   const N = Math.max(6, Math.ceil(L / (1.5 * K)));
   const pts = [];
   let x = P.x, y = P.y;
@@ -598,4 +599,41 @@ function drawProjectile(look, x, y, vx, vy, size, col, t) {
       if (K >= 1 || r >= 2) disk(x + r * 0.25, y + r * 0.25, r * 0.55, mix(col, '#000000', 0.15));
       px(x - r / 2, y - r / 2, kp(look === 'pearl' ? 3 : 2), kp(2), '#ffffff');
   }
+}
+
+// --------------------------------------------------------------- DOM labels in the game font
+// Renders text with the 3x5 bitmap font onto a small canvas (1 font pixel = 1 canvas pixel);
+// CSS scales it up with image-rendering: pixelated. style: 'logo' | 'outline' | 'plain'.
+const LOGO_ROWS = ['#f4ff9a', '#d8fa70', '#b8f048', '#8ad838', '#62c02a', '#4aa820', '#2a7a12'];
+// style: 'logo' (3x smoothed, gradient, outline + red drop shadow), 'outline' (2x smoothed, outlined),
+// 'plain' (1x, dark drop shadow), 'flat' (1x, no shadow - for text on buttons)
+function fontCanvas(text, style = 'plain', color = '#fffbe8') {
+  text = String(text).toUpperCase();
+  const f = style === 'logo' ? 3 : style === 'outline' ? 2 : 1;
+  let w = Math.max(1, textWidth(text)), h = 5, b = new Uint8Array(w * h);
+  for (let i = 0; i < text.length; i++) {
+    const g2 = FONT[text[i]] || FONT['?'];
+    for (let k = 0; k < 15; k++) if (g2[k] === '1') b[((k / 3) | 0) * w + i * 4 + (k % 3)] = 1;
+  }
+  if (f === 2) { b = scale2x(b, w, h); w *= 2; h *= 2; }
+  if (f === 3) { b = scale3x(b, w, h); w *= 3; h *= 3; }
+  const pad = style === 'flat' ? 0 : style === 'plain' ? 1 : 3;
+  const c = canvasOf(w + pad * 2, h + pad * 2), x = c.getContext('2d');
+  const put = (ox, oy, col) => { x.fillStyle = col; for (let y = 0; y < h; y++) for (let i = 0; i < w; i++) if (b[y * w + i]) x.fillRect(i + ox, y + oy, 1, 1); };
+  const o = pad;
+  if (style === 'logo' || style === 'outline') {
+    const sh = style === 'logo' ? 2 : 1;
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) put(o + sh + dx, o + sh + dy, OUT);   // shadow outline
+    put(o + sh, o + sh, style === 'logo' ? '#c8402a' : '#9c1f2a');
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) put(o + dx, o + dy, OUT);
+    if (style === 'logo') {
+      for (let y = 0; y < h; y++) for (let i = 0; i < w; i++) if (b[y * w + i]) { x.fillStyle = LOGO_ROWS[Math.min(LOGO_ROWS.length - 1, Math.floor(y / h * LOGO_ROWS.length))]; x.fillRect(i + o, y + o, 1, 1); }
+      x.fillStyle = 'rgba(255,255,255,0.55)';   // a shine line along the top of each stroke
+      for (let y = 1; y < h; y++) for (let i = 0; i < w; i++) if (b[y * w + i] && !b[(y - 1) * w + i] && y < h * 0.6) x.fillRect(i + o, y + o, 1, 1);
+    } else put(o, o, color);
+  } else {
+    if (style === 'plain') put(o + 1, o + 1, OUT);
+    put(o, o, color);
+  }
+  return c;
 }
