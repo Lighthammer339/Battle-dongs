@@ -52,7 +52,30 @@ const THEMES = [
 ];
 
 // ------------------------------------------------------------------ small sprites (canvas px, outlined)
-function spr(w, h, fn, line = OUT) { return outline(paint(w + 2, h + 2, (x, y) => (x < 1 || y < 1 || x > w || y > h ? null : fn(x - 1, y - 1))), line); }
+function spr(w, h, fn, line = OUT) {
+  const art = paint(w + 2, h + 2, (x, y) => (x < 1 || y < 1 || x > w || y > h ? null : fn(x - 1, y - 1)));
+  return outline(K < 1 ? halve(art) : art, line);
+}
+// 2:1 pixel-art reduction: each 2x2 block becomes its most common opaque color (or clear if mostly clear)
+function halve(c) {
+  const w = c.width, h = c.height, src = new Uint32Array(c.getContext('2d').getImageData(0, 0, w, h).data.buffer);
+  const w2 = Math.ceil(w / 2) + 1, h2 = Math.ceil(h / 2) + 1;
+  return paint(w2, h2, (x, y) => {
+    const cnt = new Map();
+    let opaque = 0;
+    for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+      const sx = x * 2 + i, sy = y * 2 + j;
+      if (sx >= w || sy >= h) continue;
+      const v = src[sy * w + sx];
+      if (!(v >>> 24)) continue;
+      opaque++; cnt.set(v, (cnt.get(v) || 0) + 1);
+    }
+    if (opaque < 2) return null;
+    let best = 0, bn = 0;
+    for (const [v, n] of cnt) if (n > bn) { bn = n; best = v; }
+    return best;
+  });
+}
 const ell = (x, y, cx, cy, rx, ry) => ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2;
 
 const ITEM = {
@@ -119,32 +142,33 @@ function paintSky(T, w, h, r) {
   const D = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
   const o = S.orb, ox = w * o.x, oy = h * o.y, orr = h * o.r;
   const oc = u32(o.c), oc2 = u32(o.c2), orim = u32(o.rim), crater = u32(mix(o.c2, '#000000', 0.12)), halo = u32(mix(S.sky[Math.min(n - 1, Math.floor(oy / bh))], o.rim, 0.35));
-  const clouds = Array.from({ length: 8 }, () => ({ x: r() * w, y: h * (0.1 + r() * 0.4), w: 50 + r() * 140, h: 6 + r() * 12 }));
+  const clouds = Array.from({ length: 8 }, () => ({ x: r() * w, y: h * (0.1 + r() * 0.4), w: (50 + r() * 140) * K, h: (6 + r() * 12) * K }));
+  const dk = K < 1 ? 0 : 1;   // dither cell: 1 canvas px on the 1x grid, 2 on the 2x grid
   const cloud = u32(S.cloud), cloudHi = u32(mix(S.cloud, '#ffffff', 0.15));
   const craters = Array.from({ length: 6 }, () => ({ x: (r() - 0.5) * 1.2 * orr, y: (r() - 0.5) * 1.2 * orr, r: orr * (0.08 + r() * 0.16) }));
   const star = u32('#fffbe8'), star2 = u32('#a8a0c0');
   const aur = [u32('#3affb0'), u32('#2ad890'), u32('#6affd8'), u32('#9a6aff')];
   return paint(w, h, (x, y) => {
     const f = y / bh, i = Math.min(n - 1, Math.floor(f)), frac = f - i;
-    let col = bands[frac > 0.5 + D[(y >> 1) & 3][(x >> 1) & 3] / 32 ? Math.min(n - 1, i + 1) : i];
+    let col = bands[frac > 0.5 + D[(y >> dk) & 3][(x >> dk) & 3] / 32 ? Math.min(n - 1, i + 1) : i];
     if (S.stars && y < h * 0.65) {
-      const hs = hash(x >> 1, y >> 1, 11);
+      const hs = hash(x >> dk, y >> dk, 11);
       if (hs % 1500 === 0) col = star; else if (hs % 700 === 0 && !((x ^ y) & 1)) col = star2;
     }
     if (S.aurora) {
-      const cy = h * (0.16 + 0.05 * Math.sin(x * 0.004 + 1) + 0.02 * Math.sin(x * 0.013)), d = (y - cy) / (h * 0.07);
+      const cy = h * (0.16 + 0.05 * Math.sin(x * 0.004 / K + 1) + 0.02 * Math.sin(x * 0.013 / K)), d = (y - cy) / (h * 0.07);
       if (d > -1 && d < 1.6) {
-        const k = (1 - Math.abs(d - 0.3) / 1.3) * (0.6 + 0.4 * Math.sin(x * 0.03 + Math.sin(x * 0.007) * 3));
-        if (k > 0.15 && D[y & 3][(x >> 1) & 3] / 16 < k) col = aur[(Math.floor(x / 40) + (d > 0.6 ? 1 : 0)) % 3 + (d < -0.4 ? 1 : 0)];
+        const k = (1 - Math.abs(d - 0.3) / 1.3) * (0.6 + 0.4 * Math.sin(x * 0.03 / K + Math.sin(x * 0.007 / K) * 3));
+        if (k > 0.15 && D[y & 3][(x >> dk) & 3] / 16 < k) col = aur[(Math.floor(x / (40 * K)) + (d > 0.6 ? 1 : 0)) % 3 + (d < -0.4 ? 1 : 0)];
       }
     }
     const sd = Math.hypot(x - ox, (y - oy) * 1.05);
     if (sd < orr * 1.35 && sd >= orr && D[y & 3][x & 3] / 16 < (1 - (sd - orr) / (orr * 0.35)) * 0.7) col = halo;
     if (sd < orr) {
-      if (o.kind === 'sun') col = sd < orr - 2 ? (y % 10 < 3 && y > oy ? oc2 : oc) : orim;
+      if (o.kind === 'sun') col = sd < orr - 2 * K ? (y % Math.round(10 * K) < Math.round(3 * K) && y > oy ? oc2 : oc) : orim;
       else if (o.kind === 'glow') col = sd < orr * 0.8 ? oc : (D[y & 3][x & 3] / 16 < 0.5 ? oc : oc2);
       else {
-        col = sd > orr - 2 ? orim : (x - ox) + (y - oy) > orr * 0.5 ? oc2 : oc;
+        col = sd > orr - 2 * K ? orim : (x - ox) + (y - oy) > orr * 0.5 ? oc2 : oc;
         for (const c of craters) if (Math.hypot(x - ox - c.x, y - oy - c.y) < c.r) col = crater;
       }
     }
@@ -157,7 +181,8 @@ function paintSky(T, w, h, r) {
 }
 
 // silhouette layer, tiles horizontally. Values: 1 solid, 2/3/5 lights, 4 snow.
-function silhouette(w, h, L, seed, amp) {
+function silhouette(W0, H0, L, seed, amp) {
+  const w = Math.round(W0 / K), h = Math.round(H0 / K);   // design grid
   const r = rng(seed), m = new Uint8Array(w * h);
   const set = (x, y, v = 1) => { x = ((Math.round(x) % w) + w) % w; y = Math.round(y); if (y >= 0 && y < h) m[y * w + x] = v; };
   const rect = (x, y, rw, rh, v = 1) => { for (let j = Math.round(y); j < Math.round(y + rh); j++) for (let i = Math.round(x); i < Math.round(x + rw); i++) set(i, j, v); };
@@ -228,15 +253,33 @@ function silhouette(w, h, L, seed, amp) {
       for (let k = 6; k < sw - 6; k += 6) rect(sx + k, sy + 4, 3, sh - 4, v);
     }
   }
+  if (gen === 'mountain') for (let x = 0; x < w; x++) for (let y = Math.max(0, Math.floor(top[x])); y < h; y++) {
+    const d = y - top[x];
+    if (top[x] < h * 0.55 && d < 10 + 6 * Math.sin(x * 0.11) + 4 * Math.sin(x * 0.37) && ((x + y) & 1 || d < 8)) m[y * w + x] = 4;
+  }
+  let M = m, MW = w, MH = h;
+  if (K < 1) {   // down to the real grid: any light in a 2x2 block survives, otherwise majority solid
+    MW = W0; MH = H0; M = new Uint8Array(MW * MH);
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      let solid = 0, light = 0, snowN = 0;
+      for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+        const v = m[Math.min(h - 1, y * 2 + j) * w + Math.min(w - 1, x * 2 + i)];
+        if (v) solid++;
+        if (v === 2 || v === 3 || v === 5) light = v;
+        if (v === 4) snowN++;
+      }
+      M[y * MW + x] = light || (snowN >= 2 ? 4 : solid >= 2 ? 1 : 0);
+    }
+  }
   const col = u32(L.col), rim = u32(L.rim), c2 = u32(L.c2 || L.rim), c3 = u32(L.c3 || L.c2 || L.rim), c5 = u32(L.c5 || L.c2 || L.rim), snow = u32(L.c2 || '#ffffff');
-  return paint(w, h, (x, y) => {
-    const v = m[y * w + x];
+  return paint(MW, MH, (x, y) => {
+    const v = M[y * MW + x];
     if (!v) return null;
     if (v === 2) return c2;
     if (v === 3) return c3;
     if (v === 5) return c5;
-    if (gen === 'mountain' && top[x] < h * 0.55 && y - top[x] < 10 + 6 * Math.sin(x * 0.11) + 4 * Math.sin(x * 0.37)) return (x + y) & 1 || y - top[x] < 8 ? snow : col;
-    if (y === 0 || !m[(y - 1) * w + x]) return gen === 'pines' ? snow : rim;
+    if (v === 4) return snow;
+    if (y === 0 || !M[(y - 1) * MW + x]) return gen === 'pines' ? snow : rim;
     if (hash(x, y, seed) % 61 === 0) return rim;
     return col;
   });
@@ -245,17 +288,18 @@ function silhouette(w, h, L, seed, amp) {
 // ------------------------------------------------------------------ dirt + surface
 function buildDirt(T, w, h, r) {
   const S = T.spec, cols = S.strata, lite = cols.map(u32), dark = cols.map(c => u32(mix(c, '#000000', 0.18))), hi = cols.map(c => u32(mix(c, '#ffffff', 0.1)));
-  const px = new Uint32Array(w * h), ph1 = r() * 9, ph2 = r() * 9, ph3 = r() * 9, bandH = 16 + r() * 8, tilt = (r() - 0.5) * 0.08;
+  const px = new Uint32Array(w * h), ph1 = r() * 9, ph2 = r() * 9, ph3 = r() * 9, bandH = (16 + r() * 8) * K, tilt = (r() - 0.5) * 0.08;
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const band = Math.floor((y + x * tilt + 12 * Math.sin(x * 0.025 + y * 0.01 + ph1) + 6 * Math.sin(x * 0.065 + ph2) + 3 * Math.sin(x * 0.17 + ph3)) / bandH);
+    const X = x / K, Y = y / K;   // design coords
+    const band = Math.floor((y + x * tilt + (12 * Math.sin(X * 0.025 + Y * 0.01 + ph1) + 6 * Math.sin(X * 0.065 + ph2) + 3 * Math.sin(X * 0.17 + ph3)) * K) / bandH);
     const i = ((band % cols.length) + cols.length) % cols.length, hs = hash(x, y, 3);
     let c = (hs % 5 === 0 || ((x + y) & 1 && hs % 3 === 0)) ? dark[i] : hs % 11 === 0 ? hi[i] : lite[i];
-    if (hash(x >> 2, y >> 2, 9 + (ph1 * 10 | 0)) % 53 === 0 && hs % 2) c = dark[(i + 2) % cols.length];   // pebbles
+    if (hash(Math.floor(x / (4 * K)), Math.floor(y / (4 * K)), 9 + (ph1 * 10 | 0)) % 53 === 0 && hs % 2) c = dark[(i + 2) % cols.length];   // pebbles
     px[y * w + x] = c;
   }
   // buried junk
   const sprites = new Map();
-  const count = 70 + (r() * 30 | 0);
+  const count = Math.round((70 + (r() * 30 | 0)) * (K < 1 ? 0.8 : 1));
   for (let n = 0; n < count; n++) {
     const kind = S.items[(r() * S.items.length) | 0];
     if (!sprites.has(kind)) {
@@ -282,18 +326,19 @@ function getTheme(idx, seed, W, H) {
   T.far = silhouette(w * 2, Math.round(h * 0.5), spec.far, seed + 11, 0.35);
   T.near = silhouette(w * 2, Math.round(h * 0.4), spec.near, seed + 23, 0.25);
   T.dirt = buildDirt(T, w, h, r);
-  T.crust = spec.crust.map(u32);
+  T.crust = spec.crust.filter((c, i) => K >= 1 || i % 2 === 0).map(u32);
   T.out = u32(OUT);
   T.tuftH = new Uint8Array(w); T.tuftC = new Uint32Array(w); T.drip = new Uint8Array(w);
   const tc = spec.tuft.map(u32), dripC = spec.drip ? u32(spec.drip) : 0;
   T.dripC = dripC;
   for (let x = 0; x < w; x++) {
-    const clump = (hash(x >> 3, 7, seed) % 1000) / 1000 < spec.tuftP;
+    const clump = (hash(Math.floor(x / (8 * K)), 7, seed) % 1000) / 1000 < spec.tuftP;
     if (clump) {
-      const hh = spec.tuftMax <= 2 ? 1 + ((hash(x >> 1, 5, seed) % 3) > 0 ? 1 : 0) : hash(x, 3, seed) % (spec.tuftMax + 1);
+      const tm = Math.max(1, Math.round(spec.tuftMax * K));
+      const hh = tm <= 1 ? (hash(x, 5, seed) % 3 > 0 ? 1 : 0) : spec.tuftMax <= 2 ? 1 + ((hash(x >> 1, 5, seed) % 3) > 0 ? 1 : 0) : hash(x, 3, seed) % (tm + 1);
       T.tuftH[x] = hh; T.tuftC[x] = tc[hash(x, 4, seed) % tc.length];
     }
-    if (dripC && hash(x >> 1, 9, seed) % 6 === 0) T.drip[x] = 2 + hash(x >> 1, 10, seed) % 9;
+    if (dripC && hash(Math.floor(x / (2 * K)), 9, seed) % 6 === 0) T.drip[x] = Math.round((2 + hash(Math.floor(x / (2 * K)), 10, seed) % 9) * K);
   }
   themeCache.set(key, T);
   if (themeCache.size > 3) themeCache.delete(themeCache.keys().next().value);

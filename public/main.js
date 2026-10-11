@@ -919,7 +919,7 @@ function drawWorld(W, t, extra) {
   for (const m of W.marks) {
     const k = (t - m.t0) / 900, gy = WH - W.disp[clamp(Math.floor(m.x), 0, WW - 1)];
     const mc = ((t / 80) | 0) % 2 ? '#ff5a4a' : '#ffd84a';
-    for (let y = gy - 6; y > 0; y -= 5) if (Math.random() > k) px(m.x - U / 2, y, 1, 5, mc);
+    for (let y = gy - 6; y > 0; y -= 5) if (Math.random() > k) px(m.x - U / 2, y, 1, kp(5), mc);
     disk(m.x, gy - 2, 2.5, OUT); disk(m.x, gy - 2, 2, '#ff5a4a'); disk(m.x, gy - 2, 1, '#ffd84a');
   }
   for (const p of W.tanks) {
@@ -938,7 +938,7 @@ function drawWorld(W, t, extra) {
     for (const x of f.xs) {
       const gy = WH - W.disp[clamp(x, 0, WW - 1)];
       for (let j = 0; j < RES * 2; j++) {   // two world px of flame per burning column, one canvas px per tongue
-        const cx = x * RES + j - 1, h = Math.round((6 + ((cx * 7 + (t / 60 | 0)) % 10)) * (1 - k * 0.7)), X = x + (j - 1) * U;
+        const cx = x * RES + j - 1, h = Math.max(1, Math.round((6 + ((cx * 7 + (t / 60 | 0)) % 10)) * K * (1 - k * 0.7))), X = x + (j - 1) * U;
         px(X, gy - (h + 1) * U, 1, h + 1, OUT);
         px(X, gy - h * U, 1, h, f.c);
         px(X, gy - Math.ceil(h * 0.6) * U, 1, Math.ceil(h * 0.6), '#ff9a1f');
@@ -958,7 +958,7 @@ function drawWorld(W, t, extra) {
     disk(f.x, f.y, R * 0.2 * (1 - k), '#ffffff');
     g.globalAlpha = 1;
   }
-  for (const q of W.parts) px(q.x, q.y, q.s, q.s, q.c);
+  for (const q of W.parts) px(q.x, q.y, kp(q.s), kp(q.s), q.c);
   W.texts = W.texts.filter(x => t - x.t0 < x.dur);
   for (const x of W.texts) {
     const k = (t - x.t0) / x.dur;
@@ -991,13 +991,14 @@ function drawProjectiles(t) {
       if (tt < P.t0) continue;
       const [tx, ty] = projPos(P, tt);
       g.globalAlpha = 0.55 - k * 0.1;
-      px(tx - U, WH - ty - U, k < 3 ? 3 : 2, k < 3 ? 3 : 2, P.c);
+      px(tx - U, WH - ty - U, kp(k < 3 ? 3 : 2), kp(k < 3 ? 3 : 2), P.c);
     }
     g.globalAlpha = 1;
     if (WH - y < -2) {   // above the top of the screen: show a marker
       const ax = clamp(x, 4, WW - 5);
-      for (let r = 0; r < 6; r++) px(ax - (11 - 2 * r) * U / 2, r * U, 11 - 2 * r, 1, OUT);
-      for (let r = 0; r < 4; r++) px(ax - (7 - 2 * r) * U / 2, (r + 1) * U, 7 - 2 * r, 1, P.c);
+      const rows = kp(6);
+      for (let r = 0; r < rows; r++) px(ax - (2 * (rows - r) - 1) * U / 2, r * U, 2 * (rows - r) - 1, 1, OUT);
+      for (let r = 0; r < rows - 2; r++) px(ax - (2 * (rows - r) - 5) * U / 2, (r + 1) * U, 2 * (rows - r) - 5, 1, P.c);
       continue;
     }
     drawProjectile(P.look, x, WH - y, x - qx, -(y - qy), P.s, P.c, t);
@@ -1010,16 +1011,18 @@ function drawGameOverlay(t) {
     if (p.gone) continue;
     const sx = Math.round(p.dx), sy = Math.round(WH - p.dy);
     pixText(p.name, sx, sy - 46, css(p), { align: 'center' });
-    const hp = clamp(1 - p.taken / G.hpMax, 0, 1), bw = 44, fill = Math.round(bw * hp), bx = sx - bw * U / 2, by = sy - 39;
+    const hp = clamp(1 - p.taken / G.hpMax, 0, 1), bw = kp(44), bh = kp(4), fill = Math.round(bw * hp), bx = sx - bw * U / 2, by = sy - 39;
     const hc = hp > 0.6 ? ['#5ae86a', '#b0ffb8', '#2a9a3a'] : hp > 0.3 ? ['#ffd84a', '#fff0a0', '#c89a1a'] : ['#ff5a4a', '#ffa090', '#a82a22'];
-    px(bx - U, by - U, bw + 2, 6, OUT);
-    px(bx, by, bw, 4, '#3a1418');
-    px(bx, by, fill, 4, hc[0]); px(bx, by, fill, 1, hc[1]); px(bx, by + 3 * U, fill, 1, hc[2]);
-    for (let k = 11; k < bw; k += 11) px(bx + k * U, by, 1, 4, OUT);
+    px(bx - U, by - U, bw + 2, bh + 2, OUT);
+    px(bx, by, bw, bh, '#3a1418');
+    px(bx, by, fill, bh, hc[0]);
+    if (bh >= 3) { px(bx, by, fill, 1, hc[1]); px(bx, by + (bh - 1) * U, fill, 1, hc[2]); }
+    for (let k = kp(11); k < bw; k += kp(11)) px(bx + k * U, by, 1, bh, OUT);
     if (G.cur === p.id && G.phase !== 'anim') {
       const ay = sy - 60 + Math.sin(t / 150) * 2;
-      for (let r = 0; r < 8; r++) px(sx - (15 - 2 * r) * U / 2, ay + (r - 1) * U, 15 - 2 * r, 1, OUT);
-      for (let r = 0; r < 6; r++) px(sx - (11 - 2 * r) * U / 2, ay + r * U, 11 - 2 * r, 1, r < 1 ? '#fffbe8' : css(p));
+      const rows = kp(6);
+      for (let r = 0; r < rows + 2; r++) px(sx - (2 * (rows - r) + 3) * U / 2, ay + (r - 1) * U, 2 * (rows - r) + 3, 1, OUT);
+      for (let r = 0; r < rows; r++) px(sx - (2 * (rows - r) - 1) * U / 2, ay + r * U, 2 * (rows - r) - 1, 1, r < 1 && rows > 3 ? '#fffbe8' : css(p));
     }
   }
   // the aiming player's crosshair + wind-up wedge (everyone sees it, like worms)
@@ -1039,13 +1042,17 @@ function drawGameOverlay(t) {
     const cx = pvx + ux * CROSS_D, cy = pvy + uy * CROSS_D;
     const col = css(cur), pulse = ((t / 250) | 0) % 2;
     const ring = (c, r, n) => { for (let i = 0; i < n; i++) { const q = i / n * Math.PI * 2; px(cx + Math.cos(q) * r, cy + Math.sin(q) * r, 1, 1, c); } };
-    ring(OUT, 5, 72); ring(OUT, 4, 64); ring(pulse ? col : '#fffbe8', 4.5, 72);
+    if (K < 1) { ring(OUT, 5, 40); ring(OUT, 3, 24); ring(pulse ? col : '#fffbe8', 4, 32); }
+    else { ring(OUT, 5, 72); ring(OUT, 4, 64); ring(pulse ? col : '#fffbe8', 4.5, 72); }
+    const Lc = Math.max(3, Math.round(5 * K));   // crosshair arm length, canvas px
     for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const x0 = cx + ax * 6, y0 = cy + ay * 6;
-      px(x0 - (ax ? (ax > 0 ? U : 6 * U) : 1.5 * U), y0 - (ay ? (ay > 0 ? U : 6 * U) : 1.5 * U), ax ? 7 : 3, ay ? 7 : 3, OUT);
-      px(x0 - (ax ? (ax > 0 ? 0 : 5 * U) : 0.5 * U), y0 - (ay ? (ay > 0 ? 0 : 5 * U) : 0.5 * U), ax ? 5 : 1, ay ? 5 : 1, col);
+      const x0 = cx + ax * 5.5, y0 = cy + ay * 5.5;
+      // arm: Lc long, 1 thick, inside a 1px OUT border, extending away from the center
+      const ox = ax > 0 ? 0 : ax < 0 ? -Lc * U : 0, oy = ay > 0 ? 0 : ay < 0 ? -Lc * U : 0;
+      px(x0 + ox - U, y0 + oy - U, ax ? Lc + 2 : 3, ay ? Lc + 2 : 3, OUT);
+      px(x0 + ox, y0 + oy, ax ? Lc : 1, ay ? Lc : 1, col);
     }
-    px(cx - U, cy - U, 2, 2, '#fffbe8');
+    px(cx - (K < 1 ? 0 : U), cy - (K < 1 ? 0 : U), kp(2), kp(2), '#fffbe8');
   }
   if (G.replay) drawProjectiles(t);
 }
