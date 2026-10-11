@@ -1,4 +1,6 @@
-// Pixel-art assets for BATTLE DONGS, built at runtime. Font, colors, sky and helpers come from BALLISTIC.
+// Pixel-art assets for BATTLE DONGS, built at runtime.
+// Everything on screen lives on ONE pixel grid: RES canvas pixels per world pixel. World code draws in
+// world units under a scale(RES) transform and snaps to 1/RES; tank code draws directly in canvas pixels.
 const OUT = '#1a0b10';
 // Player colors = TMNT-style bandana colors
 const PLAYER_COLORS = [
@@ -10,26 +12,11 @@ const PLAYER_COLORS = [
   { name: 'ORANGE', b: '#ff8a1f', l: '#ffc47a', d: '#b04a12', css: '#ffa04a' },
 ];
 
+const RES = 2;            // canvas pixels per world pixel
+const U = 1 / RES;        // one canvas pixel, in world units
+let DPX = U;              // size of one canvas pixel in the CURRENT drawing space (1 inside drawTank)
+
 function canvasOf(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
-
-function pixmap(rows, colors) {
-  const c = canvasOf(rows[0].length, rows.length), x = c.getContext('2d');
-  rows.forEach((row, y) => [...row].forEach((ch, i) => {
-    const col = colors[ch];
-    if (col) { x.fillStyle = col; x.fillRect(i, y, 1, 1); }
-  }));
-  return c;
-}
-
-// per-pixel painter: fn(x, y) -> color | null
-function paint(w, h, fn) {
-  const c = canvasOf(w, h), x = c.getContext('2d');
-  for (let y = 0; y < h; y++) for (let i = 0; i < w; i++) {
-    const col = fn(i, y);
-    if (col) { x.fillStyle = col; x.fillRect(i, y, 1, 1); }
-  }
-  return c;
-}
 
 const hash = (x, y, s = 0) => { let h = (x * 374761393 + y * 668265263 + s * 2147483647) | 0; h = (h ^ (h >>> 13)) * 1274126177 | 0; return (h ^ (h >>> 16)) >>> 0; };
 function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -38,46 +25,138 @@ function mix(a, b, t) {
   const A = rgbOf(a), B = rgbOf(b);
   return '#' + A.map((v, i) => Math.round(v + (B[i] - v) * t).toString(16).padStart(2, '0')).join('');
 }
+const U32 = new Map();
+function u32(hex) {   // css hex -> packed little-endian RGBA for ImageData
+  let v = U32.get(hex);
+  if (v === undefined) { const [r, gg, b] = rgbOf(hex); v = ((255 << 24) | (b << 16) | (gg << 8) | r) >>> 0; U32.set(hex, v); }
+  return v;
+}
+const toU32 = u32;
+
+// per-pixel painter: fn(x, y) -> css color | packed u32 | null
+function paint(w, h, fn) {
+  const c = canvasOf(w, h), x = c.getContext('2d'), img = x.createImageData(w, h), p = new Uint32Array(img.data.buffer);
+  for (let y = 0; y < h; y++) for (let i = 0; i < w; i++) {
+    const col = fn(i, y);
+    if (col) p[y * w + i] = typeof col === 'number' ? col : u32(col);
+  }
+  x.putImageData(img, 0, 0);
+  return c;
+}
+// adds a 1px OUT outline around the opaque pixels of a sprite (sprite needs a 1px transparent margin)
+function outline(c, col = OUT) {
+  const x = c.getContext('2d'), img = x.getImageData(0, 0, c.width, c.height), p = new Uint32Array(img.data.buffer), w = c.width, h = c.height;
+  const src = Uint32Array.from(p), o = u32(col);
+  for (let y = 0; y < h; y++) for (let i = 0; i < w; i++) {
+    if (src[y * w + i]) continue;
+    if ((i > 0 && src[y * w + i - 1]) || (i < w - 1 && src[y * w + i + 1]) || (y > 0 && src[(y - 1) * w + i]) || (y < h - 1 && src[(y + 1) * w + i])) p[y * w + i] = o;
+  }
+  x.putImageData(img, 0, 0);
+  return c;
+}
 function whiteOut(src, fill) {   // silhouette of a sprite in one color (hit flash / ghost)
   const c = canvasOf(src.width, src.height), x = c.getContext('2d');
   x.drawImage(src, 0, 0); x.globalCompositeOperation = 'source-in';
   x.fillStyle = fill; x.fillRect(0, 0, c.width, c.height);
   return c;
 }
+const whiteCache = new Map();
+function whiteOutCached(src, fill) {
+  if (!whiteCache.has(src)) whiteCache.set(src, whiteOut(src, fill));
+  return whiteCache.get(src);
+}
 
-// --------------------------------------------------------------- bitmap font (3x5)
-const FONT = (() => {
-  const g = {
-    A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110', E: '111100110100111',
-    F: '111100110100100', G: '011100101101011', H: '101101111101101', I: '111010010010111', J: '001001001101010',
-    K: '101101110101101', L: '100100100100111', M: '101111111101101', N: '111101101101101', O: '010101101101010',
-    P: '110101110100100', Q: '010101101110011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
-    U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101', Y: '101101010010010',
-    Z: '111001010100111', 0: '111101101101111', 1: '010110010010111', 2: '110001010100111', 3: '110001010001110',
-    4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010', 8: '111101111101111',
-    9: '111101111001110', '!': '010010010000010', '?': '110001010000010', '.': '000000000000010', ',': '000000000010100',
-    ':': '000010000010000', '-': '000000111000000', '+': '000010111010000', '/': '001001010100100', "'": '010010000000000',
-    '(': '001010010010001', ')': '100010010010100', '%': '101001010100101', '>': '100010001010100', '<': '001010100010001',
-    '=': '000111000111000', '*': '101010101000000', '#': '101111101111101', '[': '011010010010011', ']': '110010010010110',
-    '_': '000000000000111', '&': '010101010101011', ' ': '000000000000000',
-  };
-  return g;
-})();
+// ---- grid-snapped primitives (draw on the main canvas `g`, declared in main.js)
+const snap = v => Math.round(v / DPX) * DPX;
+function px(x, y, w, h, col) { g.fillStyle = col; g.fillRect(snap(x), snap(y), w * DPX, h * DPX); }
+// filled pixel circle; radius in current units, drawn at full canvas resolution
+function disk(cx, cy, r, col) {
+  const u = DPX;
+  g.fillStyle = col;
+  const X = Math.round(cx / u), Y = Math.round(cy / u), R = r / u, ri = Math.ceil(R);
+  for (let dy = -ri; dy <= ri; dy++) {
+    const w = R * R - dy * dy;
+    if (w < 0) continue;
+    const wi = Math.round(Math.sqrt(w));
+    g.fillRect((X - wi) * u, (Y + dy) * u, (wi * 2 + 1) * u, u);
+  }
+}
+// draw a canvas-pixel sprite at world coords without resampling
+function blit(img, x, y) { g.drawImage(img, snap(x), snap(y), img.width * DPX, img.height * DPX); }
+
+// --------------------------------------------------------------- bitmap font: 3x5 glyphs, smoothed up with EPX
+const FONT = {
+  A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110', E: '111100110100111',
+  F: '111100110100100', G: '011100101101011', H: '101101111101101', I: '111010010010111', J: '001001001101010',
+  K: '101101110101101', L: '100100100100111', M: '101111111101101', N: '111101101101101', O: '010101101101010',
+  P: '110101110100100', Q: '010101101110011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
+  U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101', Y: '101101010010010',
+  Z: '111001010100111', 0: '111101101101111', 1: '010110010010111', 2: '110001010100111', 3: '110001010001110',
+  4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010', 8: '111101111101111',
+  9: '111101111001110', '!': '010010010000010', '?': '110001010000010', '.': '000000000000010', ',': '000000000010100',
+  ':': '000010000010000', '-': '000000111000000', '+': '000010111010000', '/': '001001010100100', "'": '010010000000000',
+  '(': '001010010010001', ')': '100010010010100', '%': '101001010100101', '>': '100010001010100', '<': '001010100010001',
+  '=': '000111000111000', '*': '101010101000000', '#': '101111101111101', '[': '011010010010011', ']': '110010010010110',
+  '_': '000000000000111', '&': '010101010101011', ' ': '000000000000000',
+};
 const textWidth = (s, scale = 1) => (s.length * 4 - 1) * scale;
 
-// draws on the main canvas context `g` (declared in main.js)
+function scale2x(b, w, h) {   // EPX
+  const o = new Uint8Array(w * h * 4), at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : b[y * w + x]);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const P = at(x, y), A = at(x, y - 1), B = at(x + 1, y), C = at(x - 1, y), D = at(x, y + 1), W = w * 2;
+    o[(2 * y) * W + 2 * x] = C === A && C !== D && A !== B ? A : P;
+    o[(2 * y) * W + 2 * x + 1] = A === B && A !== C && B !== D ? B : P;
+    o[(2 * y + 1) * W + 2 * x] = D === C && D !== B && C !== A ? C : P;
+    o[(2 * y + 1) * W + 2 * x + 1] = B === D && B !== A && D !== C ? D : P;
+  }
+  return o;
+}
+function scale3x(b, w, h) {   // AdvMAME3x
+  const o = new Uint8Array(w * h * 9), at = (x, y) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : b[y * w + x]), W = w * 3;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const A = at(x - 1, y - 1), B = at(x, y - 1), C = at(x + 1, y - 1), D = at(x - 1, y), E = at(x, y), F = at(x + 1, y), G = at(x - 1, y + 1), H = at(x, y + 1), I = at(x + 1, y + 1);
+    const e = [
+      D === B && B !== F && D !== H ? D : E,
+      (D === B && B !== F && D !== H && E !== C) || (B === F && B !== D && F !== H && E !== A) ? B : E,
+      B === F && B !== D && F !== H ? F : E,
+      (D === B && B !== F && D !== H && E !== G) || (D === H && D !== B && H !== F && E !== A) ? D : E,
+      E,
+      (B === F && B !== D && F !== H && E !== I) || (H === F && D !== H && B !== F && E !== C) ? F : E,
+      D === H && D !== B && H !== F ? D : E,
+      (H === F && D !== H && B !== F && E !== G) || (D === H && D !== B && H !== F && E !== I) ? H : E,
+      H === F && D !== H && B !== F ? F : E,
+    ];
+    for (let k = 0; k < 9; k++) o[(3 * y + (k / 3 | 0)) * W + 3 * x + k % 3] = e[k];
+  }
+  return o;
+}
+const glyphCache = new Map();
+function glyph(ch, f, col) {
+  const k = ch + '|' + f + '|' + col;
+  let c = glyphCache.get(k);
+  if (c) return c;
+  let b = Uint8Array.from((FONT[ch] || FONT['?']).split('').map(Number)), w = 3, h = 5;
+  if (f === 6) { b = scale3x(scale2x(b, w, h), 6, 10); w = 9 * 2; h = 15 * 2; }
+  else { let k2 = 1; while (k2 < f) { b = scale2x(b, w, h); w *= 2; h *= 2; k2 *= 2; } }
+  const bw = w, bb = b;
+  c = paint(bw, h, (x, y) => (bb[y * bw + x] ? col : null));
+  glyphCache.set(k, c);
+  return c;
+}
+
+// pixel text in world coords
 function pixText(str, x, y, color = '#fff', o = {}) {
-  const s = o.scale || 1;
+  const s = o.scale || 1, f = RES * s;
   str = String(str).toUpperCase();
   const w = textWidth(str, s);
-  x = Math.round(o.align === 'center' ? x - w / 2 : o.align === 'right' ? x - w : x);
-  y = Math.round(y);
+  x = o.align === 'center' ? x - w / 2 : o.align === 'right' ? x - w : x;
   const shadow = o.shadow === undefined ? OUT : o.shadow;
   const pass = (ox, oy, col) => {
-    g.fillStyle = col;
     for (let i = 0; i < str.length; i++) {
-      const bits = FONT[str[i]] || FONT['?'];
-      for (let b = 0; b < 15; b++) if (bits[b] === '1') g.fillRect(x + (i * 4 + b % 3) * s + ox, y + ((b / 3) | 0) * s + oy, s, s);
+      if (str[i] === ' ') continue;
+      const gc = glyph(str[i], f, col);
+      g.drawImage(gc, snap(x + i * 4 * s + ox), snap(y + oy), gc.width * U, gc.height * U);
     }
   };
   if (shadow) { pass(s, 0, shadow); pass(0, s, shadow); pass(s, s, shadow); pass(-s, 0, shadow); pass(0, -s, shadow); }
@@ -85,148 +164,11 @@ function pixText(str, x, y, color = '#fff', o = {}) {
   return w;
 }
 
-// --------------------------------------------------------------- background (junkyard dusk)
-const BG = { sky: null, far: null, near: null, w: 0, h: 0 };
-
-function buildBackground(W, H) {
-  if (BG.w === W && BG.h === H) return;
-  BG.w = W; BG.h = H;
-  const bands = ['#1c0f1f', '#2a1428', '#3d1a2c', '#55222e', '#6e2c2e', '#8a3a2c', '#a64e2a', '#c0662a', '#d6802e', '#e69a38', '#f0b44a', '#f6cc66'];
-  const bh = H * 0.8 / bands.length;
-  const D = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-  const sunX = W * 0.68, sunY = H * 0.55, sunR = H * 0.2;
-  const r = rng(7);
-  const clouds = Array.from({ length: 7 }, () => ({ x: r() * W, y: H * (0.15 + r() * 0.35), w: 30 + r() * 70, h: 4 + r() * 6 }));
-  BG.sky = paint(W, H, (x, y) => {
-    const f = y / bh, i = Math.min(bands.length - 1, Math.floor(f)), frac = f - i;
-    let col = bands[frac > 0.5 + D[y & 3][x & 3] / 32 ? Math.min(bands.length - 1, i + 1) : i];
-    const sd = Math.hypot(x - sunX, (y - sunY) * 1.1);
-    if (sd < sunR) col = sd < sunR - 2 ? (y % 6 < 2 && y > sunY ? '#f0b44a' : '#fae0a0') : '#f6cc66';
-    // dithered smog clouds drifting in front of the sun
-    for (const c of clouds) {
-      const dx = (x - c.x) / c.w, dy = (y - c.y) / c.h, d = dx * dx + dy * dy;
-      if (d < 1) { col = d < 0.55 ? '#7a3a34' : ((x + y) & 1 ? '#7a3a34' : col); break; }
-    }
-    return col;
-  });
-  BG.far = makeJunkLayer(W * 2, Math.round(H * 0.5), '#3a1a26', '#5a2a30', 11, 0.35);
-  BG.near = makeJunkLayer(W * 2, Math.round(H * 0.4), '#1e0c14', '#3a1a20', 23, 0.25);
-}
-
-function makeJunkLayer(w, h, col, rim, seed, amp) {
-  const r = rng(seed), A = h * amp;
-  const top = new Array(w);
-  for (let x = 0; x < w; x++) {
-    const a = 2 * Math.PI * x / w;
-    top[x] = h - A - A * 0.5 * Math.sin(a * 3 + seed) - A * 0.3 * Math.sin(a * 11 + seed * 2) - A * 0.12 * Math.sin(a * 37);
-  }
-  const shapes = [];
-  for (let i = 0; i < w / 28; i++) {
-    const x = r() * w, base = top[Math.floor(x)];
-    const k = r();
-    if (k < 0.35) shapes.push({ t: 'tire', x, y: base - 3, rr: 4 + r() * 4 });
-    else if (k < 0.6) shapes.push({ t: 'box', x, y: base, w: 8 + r() * 10, h: 10 + r() * 14 });
-    else if (k < 0.8) shapes.push({ t: 'car', x, y: base, w: 26 + r() * 10 });
-    else if (k < 0.88) shapes.push({ t: 'crane', x, y: base, h: h * 0.7 });
-  }
-  const solid = (x, y) => {
-    if (y >= top[((x % w) + w) % w]) return true;
-    for (const s of shapes) {
-      const dx = x - s.x;
-      if (s.t === 'tire' && Math.hypot(dx, y - s.y) < s.rr && Math.hypot(dx, y - s.y) > s.rr * 0.45) return true;
-      if (s.t === 'box' && dx >= 0 && dx < s.w && y > s.y - s.h && y <= s.y) return true;
-      if (s.t === 'car' && dx >= 0 && dx < s.w && ((y > s.y - 7 && y <= s.y) || (y > s.y - 12 && dx > s.w * 0.25 && dx < s.w * 0.7))) return true;
-      if (s.t === 'crane' && ((dx >= 0 && dx < 3 && y > s.y - s.h) || (y > s.y - s.h - 2 && y <= s.y - s.h && dx > -30 && dx < 12) || (dx === -24 && y > s.y - s.h && y < s.y - s.h + 18))) return true;
-    }
-    return false;
-  };
-  return paint(w, h, (x, y) => {
-    if (!solid(x, y)) return null;
-    if (!solid(x, y - 1)) return rim;
-    if (hash(x, y, seed) % 61 === 0) return rim;
-    return col;
-  });
-}
-
-function drawBackground(g, W, H, t, camX = 0) {
-  g.drawImage(BG.sky, 0, 0);
-  const off1 = (((Math.round(camX * 0.15 + t * 0.002)) % BG.far.width) + BG.far.width) % BG.far.width;
-  g.drawImage(BG.far, -off1, H - BG.far.height); g.drawImage(BG.far, BG.far.width - off1, H - BG.far.height);
-  const off2 = (((Math.round(camX * 0.35 + t * 0.005)) % BG.near.width) + BG.near.width) % BG.near.width;
-  g.drawImage(BG.near, -off2, H - BG.near.height); g.drawImage(BG.near, BG.near.width - off2, H - BG.near.height);
-}
-
-// buzzing flies around a point (pure function of time, no state)
-function drawFlies(g, x, y, t, n = 2, seed = 0) {
-  for (let i = 0; i < n; i++) {
-    const k = seed * 7.3 + i * 2.1;
-    const fx = Math.round(x + Math.sin(t * 0.004 * (1 + i * 0.3) + k) * 9 + Math.sin(t * 0.017 + k) * 2);
-    const fy = Math.round(y + Math.cos(t * 0.006 * (1 + i * 0.2) + k) * 5 + Math.sin(t * 0.021 + k) * 2);
-    g.fillStyle = OUT; g.fillRect(fx, fy, 1, 1);
-    g.fillStyle = (t / 40 + i) % 2 < 1 ? '#d8e0e8' : '#8a9098'; g.fillRect(fx, fy - 1, 1, 1);
-  }
-}
-
-// --------------------------------------------------------------- terrain texture
-const toU32 = h => { const [r, gg, b] = rgbOf(h); return ((255 << 24) | (b << 16) | (gg << 8) | r) >>> 0; };
-const CRUST = [toU32(OUT), toU32('#d8a468'), toU32('#b07c48')];
-
-// Layered junkyard dirt with buried trash, as packed RGBA pixels for ImageData.
-function buildDirt(W, H) {
-  const cols = ['#7a4e2a', '#6e4426', '#84552e', '#5e3a1e', '#734a28', '#68401f'];
-  const lite = cols.map(c => toU32(c)), dark = cols.map(c => toU32(mix(c, '#000000', 0.18)));
-  const debris = ['#9a9a9a', '#c83a2a', '#e8e0c8', '#4a8a3a', '#3a3a4a', '#d8b040', '#5a9bff'].map(toU32);
-  const px = new Uint32Array(W * H);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const band = Math.floor((y + 6 * Math.sin(x * 0.05 + y * 0.02) + 3 * Math.sin(x * 0.13)) / 9);
-    const i = ((band % cols.length) + cols.length) % cols.length, h = hash(x, y, 3);
-    let c = (h % 5 === 0 || ((x + y) & 1 && h % 3 === 0)) ? dark[i] : lite[i];
-    if (h % 113 === 0) c = debris[h % debris.length];
-    if (hash(x >> 2, y >> 2, 9) % 61 === 0 && h % 2) c = dark[(i + 2) % cols.length];   // pebbles
-    px[y * W + x] = c;
-  }
-  return px;
-}
-
-// --------------------------------------------------------------- balls, disks, tanks
-const ballCache = new Map();
-function getBall(w, h, skin = '#e0a090') {   // wrinkly, slightly hairy
-  const k = w + 'x' + h + skin;
-  if (ballCache.has(k)) return ballCache.get(k);
-  const base = mix(skin, '#7a2a3a', 0.22), W2 = w + 2, H2 = h + 2, cx = W2 / 2, cy = H2 / 2;
-  const inside = (x, y) => { const dx = (x + 0.5 - cx) / (w / 2), dy = (y + 0.5 - cy) / (h / 2); return dx * dx + dy * dy <= 1; };
-  const c = paint(W2, H2, (x, y) => {
-    if (!inside(x, y)) return inside(x - 1, y) || inside(x + 1, y) || inside(x, y - 1) || inside(x, y + 1) ? OUT : null;
-    const dx = (x + 0.5 - cx) / (w / 2), dy = (y + 0.5 - cy) / (h / 2);
-    if (dx < -0.2 && dx > -0.7 && dy < -0.15 && dy > -0.75) return mix(base, '#ffffff', 0.35);
-    if (w > 6 && Math.abs(Math.sin(x * 1.3 + y * 0.6)) < 0.13 && dy > -0.4) return mix(base, '#000000', 0.28);
-    if (w > 6 && hash(x, y, 5) % 17 === 0) return OUT;
-    return dx > 0.45 || dy > 0.55 ? mix(base, '#000000', 0.2) : base;
-  });
-  ballCache.set(k, c);
-  return c;
-}
-
-// filled pixel circle on the main canvas `g`
-function disk(cx, cy, r, col) {
-  g.fillStyle = col;
-  cx = Math.round(cx); cy = Math.round(cy);
-  const ri = Math.ceil(r);
-  for (let dy = -ri; dy <= ri; dy++) {
-    const w = r * r - dy * dy;
-    if (w < 0) continue;
-    const wi = Math.round(Math.sqrt(w));
-    g.fillRect(cx - wi, cy + dy, wi * 2 + 1, 1);
-  }
-}
-
+// --------------------------------------------------------------- balls (projectiles)
 const SKIN = '#e8a890', SKIN_D = '#c07868', HEAD = '#f08a9a', HEAD_D = '#c85a6a';
 const VEIN = '#7a5aa8', HAIR = '#3a2014';
 
-// Tanks are drawn at TR x the world resolution so they get finer pixels than the terrain.
-const TR = 2;
-
-// A big wrinkly testicle with bulging veins and a few stray hairs, at tank (hi-res) scale.
+// A wrinkly testicle with bulging veins and a few stray hairs, in canvas pixels.
 const veinyCache = new Map();
 function getVeinyBall(w, h, skin, seed) {
   const k = [w, h, skin, seed].join();
@@ -235,7 +177,6 @@ function getVeinyBall(w, h, skin, seed) {
   const nx = (x, y) => [(x + 0.5 - cx) / (w / 2), (y + 0.5 - cy) / (h / 2)];
   const inside = (x, y) => { const [dx, dy] = nx(x, y); return dx * dx + dy * dy <= 1; };
   const r = rng(seed * 31 + w), veins = new Set(), hairs = new Set();
-  // veins: random walks creeping up from the bottom, sometimes forking
   const walk = (x, y, a, len) => {
     for (let i = 0; i < len; i++) {
       a += (r() - 0.5) * 0.9;
@@ -245,13 +186,12 @@ function getVeinyBall(w, h, skin, seed) {
       if (i > 3 && r() < 0.08) walk(x, y, a + (r() < 0.5 ? -1 : 1) * 0.9, len - i - 2);
     }
   };
-  for (let v = 0; v < 3; v++) {
+  if (w > 8) for (let v = 0; v < 3; v++) {
     const t = Math.PI * (0.15 + r() * 0.7);
-    walk(cx + Math.cos(t) * w * 0.4, cy + Math.sin(t) * h * 0.4, t + Math.PI + (r() - 0.5), 9 + r() * 7);
+    walk(cx + Math.cos(t) * w * 0.4, cy + Math.sin(t) * h * 0.4, t + Math.PI + (r() - 0.5), w * 0.4 + r() * w * 0.3);
   }
-  // hairs: short curly strands sticking out of the outline
-  for (let n = 0; n < 5; n++) {
-    const t = Math.PI * (0.9 + r() * 1.2);   // mostly on the sides / top
+  if (w > 8) for (let n = 0; n < 4; n++) {
+    const t = Math.PI * (0.9 + r() * 1.2);
     let x = cx + Math.cos(t) * (w / 2 + 0.5), y = cy + Math.sin(t) * (h / 2 + 0.5), a = t + (r() - 0.5);
     for (let i = 0; i < 3; i++) { x += Math.cos(a); y += Math.sin(a); a += 0.7; hairs.add(Math.round(x) + ',' + Math.round(y)); }
   }
@@ -261,13 +201,11 @@ function getVeinyBall(w, h, skin, seed) {
       return hairs.has(x + ',' + y) ? HAIR : null;
     }
     const [dx, dy] = nx(x, y), dith = ((x + y) & 1) ? 0.06 : -0.06;
-    const l = -dx * 0.55 - dy * 0.75 + dith;                // light from the top-left
-    if (dx > -0.55 && dx < -0.3 && dy > -0.62 && dy < -0.4) return mix(base, '#ffffff', 0.55);   // shine
+    const l = -dx * 0.55 - dy * 0.75 + dith;
+    if (dx > -0.55 && dx < -0.3 && dy > -0.62 && dy < -0.4) return mix(base, '#ffffff', 0.55);
     if (veins.has(x + ',' + y)) return mix(VEIN, base, l > 0 ? 0.25 : 0.05);
-    if (veins.has(x + ',' + (y + 1)) && l > -0.2) return mix(base, '#ffffff', 0.18);   // vein bulge catches light
     const wr = Math.abs(Math.sin(y * 0.85 + Math.sin(x * 0.45 + seed) * 1.6));
-    if (wr < 0.14 && dy > -0.45) return mix(base, '#000000', 0.26);          // wrinkles
-    if (hash(x, y, 5 + seed) % 29 === 0) return mix(base, HAIR, 0.6);       // follicles
+    if (w > 8 && wr < 0.14 && dy > -0.45) return mix(base, '#000000', 0.26);
     return l > 0.45 ? mix(base, '#ffffff', 0.22) : l > 0.12 ? mix(base, '#ffffff', 0.08)
       : l < -0.5 ? mix(base, '#000000', 0.32) : l < -0.12 ? mix(base, '#000000', 0.16) : base;
   });
@@ -275,89 +213,221 @@ function getVeinyBall(w, h, skin, seed) {
   return c;
 }
 
+// --------------------------------------------------------------- the ballsack walker
+// The body is a metaball "sack" around two balls (the feet) and a neck blob under the shaft,
+// re-rendered every frame so the skin stretches as the balls step, bounce and scratch.
+const SW = 88, SH = 62, SOX = 44, SOY = 58;          // scratch canvas, origin = ground point
+const sackCv = canvasOf(SW, SH), sackCtx = sackCv.getContext('2d');
+const sackImg = sackCtx.createImageData(SW, SH), sackPx = new Uint32Array(sackImg.data.buffer);
+const sackF = new Float32Array(SW * SH), sackDom = new Int8Array(SW * SH), sackCr = new Uint8Array(SW * SH);
+const SACK_PAL = (() => {
+  const base = mix(SKIN, '#9a3a4a', 0.2);
+  return {
+    base: u32(base), hi2: u32(mix(base, '#ffffff', 0.22)), hi1: u32(mix(base, '#ffffff', 0.08)),
+    sh1: u32(mix(base, '#000000', 0.16)), sh2: u32(mix(base, '#000000', 0.32)), wr: u32(mix(base, '#000000', 0.26)),
+    vein: u32(mix(VEIN, base, 0.05)), veinHi: u32(mix(VEIN, base, 0.3)), bulge: u32(mix(base, '#ffffff', 0.18)),
+    crease: u32(mix(base, '#3a0a1a', 0.45)), foll: u32(mix(base, HAIR, 0.6)), shine: u32(mix(base, '#ffffff', 0.55)),
+    white: u32('#ffffff'), out: u32(OUT),
+  };
+})();
+// fixed vein maps + hair strands for the two balls (offsets from each ball's center)
+const BALL_DETAIL = [1, 2].map(seed => {
+  const r = rng(seed * 977), veins = new Set(), hairs = [], RX = 12, RY = 11;
+  const inside = (x, y) => (x / RX) ** 2 + (y / RY) ** 2 < 0.92;
+  const walk = (x, y, a, len) => {
+    for (let i = 0; i < len; i++) {
+      a += (r() - 0.5) * 0.9; x += Math.cos(a); y += Math.sin(a);
+      if (!inside(x, y)) return;
+      veins.add(((Math.round(x) + 32) << 6) | (Math.round(y) + 32));
+      if (i > 3 && r() < 0.1) walk(x, y, a + (r() < 0.5 ? -1 : 1) * 0.9, len - i - 2);
+    }
+  };
+  for (let v = 0; v < 4; v++) {
+    const t = Math.PI * (0.1 + r() * 0.8);
+    walk(Math.cos(t) * RX * 0.8, Math.sin(t) * RY * 0.8, t + Math.PI + (r() - 0.5), 8 + r() * 9);
+  }
+  for (let n = 0; n < 6; n++) {
+    const t = Math.PI * (0.95 + r() * 1.1);
+    let x = Math.cos(t) * (RX + 0.6), y = Math.sin(t) * (RY + 0.6), a = t + (r() - 0.5);
+    const strand = [];
+    for (let i = 0; i < 3 + (r() * 2 | 0); i++) { x += Math.cos(a); y += Math.sin(a); a += 0.6 * (n % 2 ? 1 : -1); strand.push([x, y]); }
+    hairs.push(strand);
+  }
+  return { veins, hairs, seed };
+});
+
+function renderSack(parts, flash) {
+  const P = SACK_PAL;
+  sackPx.fill(0);
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+    let f = 0, best = 0, bc = -1;
+    const cb = [0, 0];
+    for (let i = 0; i < parts.length; i++) {
+      const b = parts[i], dx = (x + 0.5 - b.x) / b.rx, dy = (y + 0.5 - b.y) / b.ry, q = dx * dx + dy * dy;
+      const c = (q < 0.004 ? 4000 : Math.pow(q, -1.6)) * b.w;
+      f += c;
+      if (i < 2) cb[i] = c;
+      if (c > bc) { bc = c; best = i; }
+    }
+    const k = y * SW + x;
+    sackF[k] = f; sackDom[k] = best;
+    sackCr[k] = cb[0] > 0.28 && cb[1] > 0.28 && Math.abs(cb[0] - cb[1]) / (cb[0] + cb[1]) < 0.09 ? 1 : 0;
+  }
+  for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+    const k = y * SW + x;
+    if (sackF[k] < 1) {
+      if ((x > 0 && sackF[k - 1] >= 1) || (x < SW - 1 && sackF[k + 1] >= 1) || (y > 0 && sackF[k - SW] >= 1) || (y < SH - 1 && sackF[k + SW] >= 1)) sackPx[k] = P.out;
+      continue;
+    }
+    if (flash) { sackPx[k] = P.white; continue; }
+    const b = parts[sackDom[k]], lx = x + 0.5 - b.x, ly = y + 0.5 - b.y, nx = lx / b.rx, ny = ly / b.ry;
+    const l = -nx * 0.55 - ny * 0.75 + (((x + y) & 1) ? 0.06 : -0.06) - (sackF[k] < 1.25 ? 0.25 : 0);
+    let c;
+    if (sackCr[k] && ly > -b.ry * 0.7) c = P.crease;
+    else if (b.d) {
+      const vk = ((Math.round(lx) + 32) << 6) | (Math.round(ly) + 32), vb = ((Math.round(lx) + 32) << 6) | (Math.round(ly) + 33);
+      if (nx > -0.55 && nx < -0.28 && ny > -0.65 && ny < -0.4) c = P.shine;
+      else if (b.d.veins.has(vk)) c = l > 0 ? P.veinHi : P.vein;
+      else if (b.d.veins.has(vb) && l > -0.2) c = P.bulge;
+      else if (Math.abs(Math.sin(ly * 0.85 + Math.sin(lx * 0.45 + b.d.seed) * 1.6)) < 0.13 && ny > -0.4) c = P.wr;
+      else if (hash(Math.round(lx) + 40, Math.round(ly) + 40, b.d.seed) % 31 === 0) c = P.foll;
+    }
+    if (!c) c = l > 0.45 ? P.hi2 : l > 0.12 ? P.hi1 : l < -0.5 ? P.sh2 : l < -0.12 ? P.sh1 : P.base;
+    sackPx[k] = c;
+  }
+  sackCtx.putImageData(sackImg, 0, 0);
+}
+
+// ---- idle animations: each tweaks a pose; p = 0..1 progress, t = ms clock
+const smooth = (a, b, x) => { const k = Math.max(0, Math.min(1, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
+const envOf = p => smooth(0, 0.15, p) * (1 - smooth(0.85, 1, p));
+const lerpAng = (a, b, k) => { let d = ((b - a) % 360 + 540) % 360 - 180; return a + d * k; };
+const IDLES = {
+  // lifts a ball like a dog's hind leg and scratches its head with it
+  scratch: { dur: 2600, fn(p, t, s) {
+    const e = envOf(p), fr = s.face;
+    s.ball[1].dy -= 9 * e; s.ball[1].dx += fr * 5 * e + Math.sin(t / 26) * 2.2 * e;
+    s.ball[0].dy += 0; s.sx -= fr * 2 * e;
+    s.ang = lerpAng(s.ang, fr > 0 ? -12 : 192, e); s.lenMul *= 1 - 0.12 * e;
+    if (e > 0.5) s.eyes = 'happy';
+  } },
+  // little shuffle dance, balls stepping to the beat, shaft wagging
+  shuffle: { dur: 3000, fn(p, t, s) {
+    const e = envOf(p), b = t / 115;
+    s.bob -= Math.abs(Math.sin(b)) * 3 * e; s.sx += Math.sin(b / 2) * 4 * e;
+    s.ball[0].dy -= Math.max(0, Math.sin(b)) * 4 * e; s.ball[1].dy -= Math.max(0, -Math.sin(b)) * 4 * e;
+    s.ang = lerpAng(s.ang, 90 + Math.sin(b / 2) * 35, e); s.notes = e; s.eyes = 'happy';
+  } },
+  // big morning stretch: shoots straight up, mouth open... then flops
+  yawn: { dur: 2600, fn(p, t, s) {
+    const up = smooth(0, 0.35, p) * (1 - smooth(0.55, 0.7, p)), e = envOf(p);
+    s.ang = lerpAng(s.ang, 90, up); s.lenMul *= 1 + 0.3 * up; s.mouth = up;
+    s.limpAdd += 0.7 * Math.sin(Math.PI * smooth(0.55, 1, p)) * e;
+    s.ball[0].dy -= up * 1.5; s.ball[1].dy -= up * 1.5;
+    if (up > 0.3) s.eyes = 'closed';
+  } },
+  // looks around, left then right, eyes wide
+  look: { dur: 2800, fn(p, t, s) {
+    const e = envOf(p);
+    s.ang = lerpAng(s.ang, 90 + 72 * Math.sin(p * Math.PI * 2), e); s.eyes = 'wide';
+  } },
+  // the helicopter
+  helicopter: { dur: 2400, fn(p, t, s) {
+    const e = envOf(p), k = smooth(0.05, 0.95, p);
+    s.ang = s.ang + 1080 * k * s.face; s.lenMul *= 1 - 0.12 * e; s.heli = e;
+    s.bob -= Math.abs(Math.sin(t / 60)) * 1.5 * e; s.eyes = 'happy';
+  } },
+  // winds up... ACHOO, sprays everybody
+  sneeze: { dur: 2000, fn(p, t, s) {
+    const wind = smooth(0, 0.55, p) * (1 - smooth(0.55, 0.6, p)), snap = smooth(0.55, 0.6, p) * (1 - smooth(0.7, 1, p));
+    s.ang = s.ang + s.face * (28 * wind - 14 * snap); s.lenMul *= 1 - 0.3 * wind + 0.18 * snap;
+    s.bob += 2 * wind - 2 * snap;
+    if (wind > 0.5) s.eyes = 'closed';
+    if (p > 0.56) s.spray = (p - 0.56) / 0.44;
+  } },
+};
+const IDLE_KINDS = Object.keys(IDLES);
+
 // The dick tank. (sx, sy) = ground under its middle (world px); ang in degrees (0 = right, 90 = up).
-// o: { face: 1 / -1 (optional), flash, roll, erect: 0..1 (1 = rock hard, 0 = limp noodle), recoil: 0..1, charge: 0..1, moving }
+// o: { face, flash, walk (stride phase), moving, erect 0..1, recoil 0..1, charge 0..1, idle: { k, p } }
 // Returns the tip of the head in world px (where the load comes out).
 function drawTank(sx, sy, ang, color, t, o = {}) {
   const pc = PLAYER_COLORS[color];
   const flash = o.flash && ((t / 60) | 0) % 2 === 0;
   const C = c => (flash ? '#ffffff' : c);
-  const e = o.erect == null ? 1 : Math.max(0, Math.min(1, o.erect));
   const face = o.face || (Math.cos(ang * Math.PI / 180) < -1e-6 ? -1 : 1);
-  g.save(); g.scale(1 / TR, 1 / TR);
-  const X = Math.round(sx * TR), Y = Math.round(sy * TR);
-  const rect = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), w, h); };
-  const roll = o.roll || 0;
+  const s = { face, ang, lenMul: 1, bob: 0, sx: 0, ball: [{ dx: 0, dy: 0 }, { dx: 0, dy: 0 }], eyes: 'open', mouth: 0, limpAdd: 0, spray: 0, notes: 0, heli: 0 };
+  // walking: the balls take turns stepping forward inside the sack
+  if (o.moving) {
+    const ph = (o.walk || 0) * 0.55;
+    for (let i = 0; i < 2; i++) {
+      const q = ph + i * Math.PI;
+      s.ball[i].dy -= Math.max(0, Math.sin(q)) * 5;
+      s.ball[i].dx += Math.cos(q) * 3 * face;
+    }
+    s.bob -= Math.abs(Math.sin(ph)) * 1.5;
+    s.ang += Math.sin(ph * 2) * 6;
+  }
+  if (o.idle && IDLES[o.idle.k]) IDLES[o.idle.k].fn(o.idle.p, t, s);
+  const e = Math.max(0, Math.min(1, (o.erect == null ? 1 : o.erect) - s.limpAdd));
+  const jig = o.flash ? Math.round(Math.sin(t / 40) * 1.5) : 0;
 
-  // ---- exhaust pipe at the back, puffing while driving
-  const ex = X - face * 21;
-  rect(ex - 2, Y - 27, 5, 10, OUT); rect(ex - 1, Y - 26, 3, 9, C('#6a6460')); rect(ex - 1, Y - 26, 1, 9, C('#9a948c'));
-  if (o.moving) for (let k = 0; k < 3; k++) {
-    const ph = (t / 400 + k / 3) % 1;
-    disk(ex - face * ph * 6, Y - 29 - ph * 12, 1 + ph * 2.5, ph < 0.5 ? '#8a8078' : '#5a5250');
-  }
+  g.save(); g.scale(1 / RES, 1 / RES);
+  const saved = DPX; DPX = 1;
+  const X = Math.round(sx * RES), Y = Math.round(sy * RES);
 
-  // ---- treads: rubber loop, road wheels, moving lugs
-  const capsule = (cy, rr, c) => { disk(X - 19, cy, rr, c); disk(X + 19, cy, rr, c); rect(X - 19, cy - rr, 38, Math.round(rr * 2) + 1, c); };
-  capsule(Y - 7, 7.5, OUT);
-  capsule(Y - 7, 6.5, C('#2b2724'));
-  capsule(Y - 7, 4.6, C('#46403a'));
-  for (let i = 0; i < 9; i++) {   // lugs ride the bottom run and the top run in opposite directions
-    const ob = ((i * 5 - roll * 2) % 45 + 45) % 45 - 22, ot = ((i * 5 + roll * 2) % 45 + 45) % 45 - 22;
-    rect(X + ob, Y - 1, 2, 1, C('#8a8478'));
-    rect(X + ot, Y - 14, 2, 1, C('#5a554e'));
-  }
-  for (const wx of [-19, -9.5, 0, 9.5, 19]) {
-    const cx = X + wx, cy = Y - 7, wa = roll * 0.35 + wx;
-    disk(cx, cy, 4.6, OUT); disk(cx, cy, 3.6, C('#8a8478')); disk(cx, cy, 2.4, C('#5a554e')); disk(cx - 1, cy - 1, 1, C('#c8c0b0'));
-    rect(cx + Math.cos(wa) * 2.6, cy + Math.sin(wa) * 2.6, 1, 1, C('#c8c0b0'));
-    rect(cx - Math.cos(wa) * 2.6, cy - Math.sin(wa) * 2.6, 1, 1, OUT);
-  }
-  // fender plate in team colors
-  rect(X - 25, Y - 19, 50, 7, OUT);
-  rect(X - 24, Y - 18, 48, 5, C(pc.b));
-  rect(X - 24, Y - 18, 48, 1, C(pc.l));
-  rect(X - 24, Y - 14, 48, 1, C(pc.d));
-  for (let k = -20; k <= 20; k += 8) { rect(X + k, Y - 16, 1, 1, C(pc.d)); rect(X + k, Y - 17, 1, 1, C(pc.l)); }
+  // ---- ground shadow
+  g.globalAlpha = 0.28; g.fillStyle = '#000000';
+  g.fillRect(X - 22 + s.sx, Y - 1, 44, 2); g.fillRect(X - 17 + s.sx, Y + 1, 34, 1);
+  g.globalAlpha = 1;
 
-  // ---- the balls = turret. Jiggle when driving or hit, hang lower when it's limp.
-  const jig = (o.moving || o.flash) ? Math.round(Math.sin(t / 45)) : 0;
-  const sag = Math.round((1 - e) * 2);
-  const bl = getVeinyBall(22, 20 + sag, SKIN, 1), br = getVeinyBall(24, 22 + sag, SKIN, 2);
-  const bL = flash ? whiteOutCached(bl, '#ffffff') : bl, bR = flash ? whiteOutCached(br, '#ffffff') : br;
-  const back = face > 0 ? [bL, -1] : [bR, 1], front = face > 0 ? [bR, 1] : [bL, -1];
-  for (const [img, side] of [back, front]) {
-    g.drawImage(img, (X + side * 10 - img.width / 2) | 0, Y - 17 - img.height + 3 + (side > 0 ? jig : -jig));
+  // ---- the sack: back ball, front ball, neck blob under the shaft
+  const sag = (1 - e) * 2.5, bx = SOX + s.sx, by = SOY + s.bob;
+  const balls = [-1, 1].map((side, i) => {
+    const RX = i ? 12.5 : 11.5, RY = (i ? 11.5 : 10.5) + sag;
+    return { x: bx + side * face * 10 + s.ball[i].dx, y: SOY - RY - 0.5 + s.ball[i].dy + s.bob * 0.4 + (i ? jig : -jig), rx: RX, ry: RY, w: 1, d: BALL_DETAIL[i] };
+  });
+  const neck = { x: bx, y: by - 22 + sag * 0.5, rx: 7, ry: 6, w: 0.55, d: null };
+  renderSack([balls[0], balls[1], neck], flash);
+  g.drawImage(sackCv, X - SOX, Y - SOY);
+  if (!flash) {   // stray hairs on the sack
+    g.fillStyle = HAIR;
+    balls.forEach(b => b.d.hairs.forEach(st => st.forEach(([hx, hy]) => g.fillRect(Math.round(X - SOX + b.x + hx * face), Math.round(Y - SOY + b.y + hy), 1, 1))));
   }
-  // the seam between them
-  g.fillStyle = C(mix(SKIN, '#000000', 0.4));
-  for (let y = Y - 34; y < Y - 19; y++) g.fillRect(X + Math.round(Math.sin(y * 0.7)), y, 1, 1);
 
   // ---- the shaft = barrel. Points along the aim, droops and shrinks as the wood fades.
-  const P = { x: X, y: Y - 12 * TR };                       // pivot (server PIVOT = 12 world px)
+  const P = { x: X + s.sx, y: Y - 12 * RES + s.bob };     // pivot (server PIVOT = 12 world px)
   const rh = rng(7 + color);                                // pubes
   g.fillStyle = C(HAIR);
-  for (let n = 0; n < 22; n++) {
-    const a = Math.PI * (1.05 + rh() * 0.9), d = 4 + rh() * 5;
-    const x = P.x + Math.cos(a) * d, y = P.y + Math.sin(a) * d;
+  for (let n = 0; n < 26; n++) {
+    const a = Math.PI * (1.0 + rh() * 1.0), d = 4 + rh() * 5;
+    const x = P.x + Math.cos(a) * d, y = P.y + 2 + Math.sin(a) * d * 0.8;
     g.fillRect(Math.round(x), Math.round(y), 1, 1);
     g.fillRect(Math.round(x + Math.cos(a + 1.2)), Math.round(y + Math.sin(a + 1.2)), 1, 1);
   }
-  const theta = ang * Math.PI / 180, limp = 1 - e;
-  const target = (face > 0 ? -80 : 260) * Math.PI / 180;    // where gravity pulls a floppy one
+  const theta = s.ang * Math.PI / 180, limp = 1 - e;
+  let droopD = (face > 0 ? -80 : 260) - s.ang;               // where gravity pulls a floppy one (shortest way round)
+  droopD = ((droopD % 360) + 540) % 360 - 180;
+  const target = theta + droopD * Math.PI / 180;
   const sway = limp * 0.12 * Math.sin(t / 650 + color);
-  const beat = (t % 1000) < 110 ? 1 : 0;                    // heartbeat throb
+  const beat = (t % 1000) < 110 ? 1 : 0;                   // heartbeat throb
   const shake = (o.charge || 0) * 0.8;
-  const L = (9 + 6 * e) * TR * (1 - 0.3 * (o.recoil || 0));
-  const R0 = (2.2 + 0.4 * e) * TR + beat * e * 0.5;
+  const L = (9 + 6 * e) * RES * (1 - 0.3 * (o.recoil || 0)) * s.lenMul;
+  const R0 = (2.2 + 0.4 * e) * RES + beat * e * 0.5;
   const N = Math.max(6, Math.ceil(L / 1.5));
   const pts = [];
   let x = P.x, y = P.y;
   for (let i = 0; i <= N; i++) {
-    const s = i / N, k = Math.min(1, limp * (0.25 + 0.85 * Math.pow(s, 1.2)) + sway * s);
+    const q = i / N, k = Math.min(1, limp * (0.25 + 0.85 * Math.pow(q, 1.2)) + sway * q);
     const phi = theta + (target - theta) * k;
-    pts.push({ x: x + (Math.random() - 0.5) * shake, y: y + (Math.random() - 0.5) * shake, phi, r: R0 * (1 - 0.1 * s) });
+    pts.push({ x: x + (Math.random() - 0.5) * shake, y: y + (Math.random() - 0.5) * shake, phi, r: R0 * (1 - 0.1 * q) });
     x += Math.cos(phi) * (L / N); y -= Math.sin(phi) * (L / N);
+  }
+  // helicopter: motion blur ring
+  if (s.heli > 0.3) {
+    g.globalAlpha = 0.35 * s.heli; g.fillStyle = '#fffbe8';
+    for (let i = 0; i < 40; i++) { const a = i / 40 * Math.PI * 2; g.fillRect(Math.round(P.x + Math.cos(a) * L * 0.95), Math.round(P.y - Math.sin(a) * L * 0.95), 1, 1); }
+    g.globalAlpha = 1;
   }
   // unit normal pointing at the screen-bottom side of the shaft (the shadow side)
   const under = q => { let nx = Math.sin(q.phi), ny = Math.cos(q.phi); if (ny < 0 || (ny === 0 && nx < 0)) { nx = -nx; ny = -ny; } return [nx, ny]; };
@@ -373,13 +443,24 @@ function drawTank(sx, sy, ang, color, t, o = {}) {
   if (!flash && e > 0.15) {
     g.fillStyle = mix(shaftCol, VEIN, 0.25 + 0.5 * e + beat * 0.15);
     pts.forEach((q, i) => {
-      if (i < 2 || i > pts.length - 2) return;
-      const [ux, uy] = under(q), s = i / N;
-      const o1 = q.r * (0.1 + 0.45 * Math.sin(s * 8 + color)), o2 = q.r * (-0.55 + 0.25 * Math.sin(s * 11 + 2));
+      if (i < 3 || i > pts.length - 2) return;
+      const [ux, uy] = under(q), f = i / N;
+      const o1 = q.r * (0.1 + 0.45 * Math.sin(f * 8 + color)), o2 = q.r * (-0.55 + 0.25 * Math.sin(f * 11 + 2));
       g.fillRect(Math.round(q.x + ux * o1), Math.round(q.y + uy * o1), 1, 1);
       if (e > 0.45) g.fillRect(Math.round(q.x + ux * o2), Math.round(q.y + uy * o2), 1, 1);
       if (i % 5 === 3 && e > 0.6) g.fillRect(Math.round(q.x + ux * (o1 + 1) + dx), Math.round(q.y + uy * (o1 + 1) + dy), 1, 1);
     });
+  }
+  // cock ring in team colors at the base
+  if (!flash) {
+    const q = pts[Math.min(2, pts.length - 1)], cx = Math.cos(q.phi), cy = -Math.sin(q.phi), [ux, uy] = under(q), ri = Math.ceil(q.r + 2);
+    for (let j = -ri; j <= ri; j++) for (let i = -ri; i <= ri; i++) {
+      const along = i * cx + j * cy, across = i * ux + j * uy;
+      if (Math.abs(along) <= 1.1 && Math.abs(across) <= q.r + 1.2) {
+        g.fillStyle = Math.abs(across) > q.r + 0.4 ? OUT : across < -q.r * 0.3 ? pc.l : across > q.r * 0.4 ? pc.d : pc.b;
+        g.fillRect(Math.round(q.x) + i, Math.round(q.y) + j, 1, 1);
+      }
+    }
   }
   // ---- the head: corona ring, shading, shine, pee hole
   const head = mix(mix(HEAD, '#c8a0aa', limp * 0.6), '#ff6a8a', e * 0.15), headD = mix(head, '#5a1a2a', 0.35);
@@ -390,8 +471,11 @@ function drawTank(sx, sy, ang, color, t, o = {}) {
   disk(hx + dx * 1.5 - ux * HR * 0.5, hy + dy * 1.5 - uy * HR * 0.5, HR * 0.28, C(mix(head, '#ffffff', 0.5)));
   const tx = hx + dx * (HR + 0.5), ty = hy + dy * (HR + 0.5);
   if (!flash) {
-    g.fillStyle = mix(head, '#3a0a1a', 0.6);
-    g.fillRect(Math.round(tx - ux), Math.round(ty - uy), 1, 1); g.fillRect(Math.round(tx), Math.round(ty), 1, 1);
+    if (s.mouth > 0.1) disk(tx - dx * 1.2, ty - dy * 1.2, 0.8 + s.mouth * 1.6, '#4a0a1a');   // big yawn
+    else {
+      g.fillStyle = mix(head, '#3a0a1a', 0.6);
+      g.fillRect(Math.round(tx - ux), Math.round(ty - uy), 1, 1); g.fillRect(Math.round(tx), Math.round(ty), 1, 1);
+    }
     // pre-cum glistens while charging
     if (o.charge > 0.05) disk(tx + dx * (1 + o.charge * 1.5), ty + dy * (1 + o.charge * 1.5), 0.6 + o.charge * 1.2, (t / 90 | 0) % 2 ? '#fffbe8' : '#d8e8ff');
     // bandana tied across the head, tails flapping behind it
@@ -410,69 +494,91 @@ function drawTank(sx, sy, ang, color, t, o = {}) {
       }
     }
     disk(kx, ky, 1.2, pc.d);
-    // googly eyes peeking through the mask, looking where it's aiming
+    // eyes peeking through the mask
     for (const sd of [-1, 1]) {
-      const ex2 = bcx + ux * sd * HR * 0.48, ey2 = bcy + uy * sd * HR * 0.48;
-      disk(ex2, ey2, 1.3, '#ffffff');
-      g.fillStyle = OUT; g.fillRect(Math.round(ex2 + dx * 0.8), Math.round(ey2 + dy * 0.8), 1, 1);
+      const ex = bcx + ux * sd * HR * 0.48, ey = bcy + uy * sd * HR * 0.48;
+      if (s.eyes === 'closed' || s.eyes === 'happy') {
+        g.fillStyle = OUT;
+        for (let k = -1; k <= 1; k++) g.fillRect(Math.round(ex + dx * k), Math.round(ey + dy * k - (s.eyes === 'happy' && k === 0 ? 1 : 0)), 1, 1);
+      } else {
+        disk(ex, ey, s.eyes === 'wide' ? 1.8 : 1.3, '#ffffff');
+        g.fillStyle = OUT; g.fillRect(Math.round(ex + dx * 0.8), Math.round(ey + dy * 0.8), 1, 1);
+      }
     }
     // nervous sweat drop when it's going soft
     if (e < 0.35) {
       const ph = (t / 1400 + color * 0.3) % 1;
       disk(hx - ux * (HR + 2), hy - uy * (HR + 2) + ph * 6, 1, '#8ac8ff');
     }
+    // sneeze spray: a cone of droplets arcing out of the tip
+    if (s.spray > 0 && s.spray < 1) {
+      const rs = rng(31 + color);
+      for (let i = 0; i < 9; i++) {
+        const a = Math.atan2(dy, dx) + (rs() - 0.5) * 0.9, v = 22 + rs() * 26, k = s.spray;
+        const ddx = tx + Math.cos(a) * v * k, ddy = ty + Math.sin(a) * v * k + 40 * k * k;
+        disk(ddx, ddy, 1 + rs() * 0.8 * (1 - k), i % 3 ? '#e8f4ff' : '#fffbe8');
+      }
+    }
+    // dance notes
+    if (s.notes > 0.3) {
+      for (let i = 0; i < 2; i++) {
+        const ph = (t / 900 + i * 0.5) % 1, nx = X + s.sx + (i ? 14 : -14) + Math.sin(ph * 6) * 3, ny = Y - 48 - ph * 18;
+        g.globalAlpha = Math.min(1, (1 - ph) * 2) * s.notes;
+        g.fillStyle = OUT; g.fillRect(nx - 1, ny + 3, 4, 3); g.fillRect(nx + 2, ny - 4, 2, 8);
+        g.fillStyle = i ? pc.l : '#fffbe8'; g.fillRect(nx, ny + 4, 2, 1); g.fillRect(nx + 2, ny - 3, 1, 7); g.fillRect(nx + 3, ny - 3, 2, 1);
+        g.globalAlpha = 1;
+      }
+    }
   }
+  DPX = saved;
   g.restore();
-  return { x: tx / TR, y: ty / TR };
-}
-const whiteCache = new Map();
-function whiteOutCached(src, fill) {
-  if (!whiteCache.has(src)) whiteCache.set(src, whiteOut(src, fill));
-  return whiteCache.get(src);
+  return { x: tx / RES, y: ty / RES };
 }
 
-// --------------------------------------------------------------- projectiles
+// --------------------------------------------------------------- projectiles (world coords)
 function drawProjectile(look, x, y, vx, vy, size, col, t) {
   const r = Math.max(1, size / 2);
   const sp = Math.hypot(vx, vy) || 1, ux = vx / sp, uy = vy / sp;
   switch (look) {
     case 'ball': {
-      const b = getBall(size + 3, size + 2, mix(col, SKIN, 0.4));
-      g.drawImage(b, Math.round(x - b.width / 2), Math.round(y - b.height / 2));
+      const b = getVeinyBall(Math.round((size + 3) * RES), Math.round((size + 2) * RES), mix(col, SKIN, 0.4), 3);
+      blit(b, x - b.width * U / 2, y - b.height * U / 2);
       return;
     }
     case 'nuts': {   // a big pair, jiggling as it flies
-      const bw = Math.max(4, Math.round(size * 0.72)), bh = Math.max(4, Math.round(size * 0.85));
-      const skin = mix(col, SKIN, 0.4), wob = Math.round(Math.sin(t / 90));
-      const L = getBall(bw, bh, skin), R = getBall(bw, bh + 1, skin);
-      const off = Math.round(bw * 0.42);
-      g.drawImage(L, Math.round(x - off - L.width / 2), Math.round(y - L.height / 2) + wob);
-      g.drawImage(R, Math.round(x + off - R.width / 2), Math.round(y - R.height / 2) - wob);
-      g.fillStyle = mix(skin, '#000000', 0.45);   // the seam
-      g.fillRect(Math.round(x), Math.round(y - bh / 2 + 1), 1, Math.max(2, bh - 3));
+      const bw = Math.max(8, Math.round(size * 0.72 * RES)), bh = Math.max(8, Math.round(size * 0.85 * RES));
+      const skin = mix(col, SKIN, 0.4), wob = Math.sin(t / 90) * U * 2;
+      const L = getVeinyBall(bw, bh, skin, 4), R = getVeinyBall(bw, bh + 2, skin, 5);
+      const off = bw * 0.42 * U;
+      blit(L, x - off - L.width * U / 2, y - L.height * U / 2 + wob);
+      blit(R, x + off - R.width * U / 2, y - R.height * U / 2 - wob);
+      px(x, y - bh * U / 2 + 1, 1, Math.max(3, bh - 5), mix(skin, '#000000', 0.45));   // the seam
       return;
     }
     case 'rocket':
     case 'probe': {
       const len = look === 'rocket' ? 4 : 5;
-      for (let d = 0; d <= len; d++) disk(x - ux * d, y - uy * d, r + 1, OUT);
-      for (let d = 0; d <= len; d++) disk(x - ux * d, y - uy * d, r, d === 0 ? (look === 'probe' ? HEAD : '#ffffff') : col);
+      for (let d = 0; d <= len; d += 0.5) disk(x - ux * d, y - uy * d, r + U * 2, OUT);
+      for (let d = 0; d <= len; d += 0.5) disk(x - ux * d, y - uy * d, r, d < 1 ? (look === 'probe' ? HEAD : '#ffffff') : col);
+      disk(x - ux * len * 0.5 - uy * r * 0.4, y - uy * len * 0.5 + ux * r * 0.4, r * 0.35, mix(col, '#ffffff', 0.4));
       if (look === 'rocket') {
-        g.fillStyle = (t / 50 | 0) % 2 ? '#ffd84a' : '#ff7a1f';
-        g.fillRect(Math.round(x - ux * (len + 2)), Math.round(y - uy * (len + 2)), 2, 2);
+        const fl = (t / 50 | 0) % 2;
+        disk(x - ux * (len + 1.5), y - uy * (len + 1.5), 1.5, fl ? '#ffd84a' : '#ff7a1f');
+        disk(x - ux * (len + 3), y - uy * (len + 3), 1, fl ? '#ff7a1f' : '#ffd84a');
       }
       return;
     }
     case 'drop':
-      disk(x, y, r + 1, OUT); disk(x - ux * 1.5, y - uy * 1.5, r, col); disk(x, y, r, col);
-      g.fillStyle = '#ffffff'; g.fillRect(Math.round(x - 1), Math.round(y - 1), 1, 1);
+      disk(x, y, r + U * 2, OUT); disk(x - ux * 1.5, y - uy * 1.5, r, col); disk(x, y, r, col);
+      px(x - r / 2, y - r / 2, 2, 2, '#ffffff');
       return;
     case 'dirt':
-      disk(x, y, r + 1, OUT); disk(x, y, r, col);
-      g.fillStyle = mix(col, '#000000', 0.35); g.fillRect(Math.round(x), Math.round(y), 1, 1);
+      disk(x, y, r + U * 2, OUT); disk(x, y, r, col);
+      px(x, y, 2, 2, mix(col, '#000000', 0.35)); px(x - r / 2, y + r / 3, 1, 1, mix(col, '#000000', 0.35));
       return;
     default:   // glob / pearl
-      disk(x, y, r + 1, OUT); disk(x, y, r, col);
-      g.fillStyle = '#ffffff'; g.fillRect(Math.round(x - r / 2), Math.round(y - r / 2), look === 'pearl' ? 2 : 1, 1);
+      disk(x, y, r + U * 2, OUT); disk(x, y, r, col);
+      disk(x + r * 0.25, y + r * 0.25, r * 0.55, mix(col, '#000000', 0.15));
+      px(x - r / 2, y - r / 2, look === 'pearl' ? 3 : 2, 2, '#ffffff');
   }
 }

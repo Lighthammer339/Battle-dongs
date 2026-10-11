@@ -3,7 +3,6 @@
 const $ = s => document.querySelector(s);
 const cv = $('#screen'), g = cv.getContext('2d');
 const WW = 640, WH = 300;          // world size in pixels (same as server.py)
-const RES = 2;                     // canvas pixels per world pixel (tanks use the extra detail)
 cv.width = WW * RES; cv.height = WH * RES;
 const PHYS = { g: 200, vmax: 410, pivot: 12, barrel: 14, aimMin: -45, aimMax: 225, charge: 1.6 };
 const CROSS_D = 44;                // crosshair distance from the pivot, world px
@@ -66,9 +65,15 @@ function groundAt(H, x) {
 }
 
 // A drawable battlefield: terrain + tanks + effects. Used by the real game and the menu demo.
-function makeWorld(H) {
-  return { H: Float32Array.from(H), disp: Float32Array.from(H), dirty: true,
+function makeWorld(H, themeIdx, seed) {
+  return { H: Float32Array.from(H), disp: Float32Array.from(H), dirty: true, theme: getTheme(themeIdx, seed, WW, WH), props: [],
            tanks: [], fx: [], parts: [], fires: [], marks: [], texts: [], shake: 0 };
+}
+// every client derives the same environment from the terrain the server sent
+function themeSeedOf(H) {
+  let h = 7;
+  for (let i = 0; i < H.length; i += 13) h = (Math.imul(h, 31) + Math.round(H[i] * 10)) | 0;
+  return h >>> 0;
 }
 
 // ------------------------------------------------------------------ app / net
@@ -135,7 +140,7 @@ function show(name) {
 const nick = $('#nick');
 try { nick.value = localStorage.getItem('battledongs.nick') || ''; } catch (e) {}
 
-document.addEventListener('pointerdown', () => { Sound.init(); Sound.play(G ? 'battle' : 'menu'); });
+document.addEventListener('pointerdown', () => { Sound.init(); Sound.play(G ? G.song : 'menu'); });
 document.addEventListener('click', e => { if (e.target.closest && e.target.closest('button')) Sound.sfx('click'); });
 
 function updateMusicLabels() {
@@ -260,12 +265,12 @@ const css = p => PLAYER_COLORS[p.color].css;
 
 function startGame(m) {
   Object.assign(PHYS, m.physics || {});
-  const world = makeWorld(m.state.H);
+  const seed = themeSeedOf(m.state.H), world = makeWorld(m.state.H, seed % THEMES.length, seed);
   G = {
     world, players: new Map(), order: m.players.map(p => p.id),
     powers: new Map(m.powers.map(p => [p.name, p])),
     phase: 'draft', cur: null, deadline: 0, turnN: 0, replay: null, draft: null,
-    w: 0, banner: null, lastAimSent: 0, aimTimer: null, hpMax: m.hp || 250, face: 1,
+    w: 0, banner: null, lastAimSent: 0, aimTimer: null, hpMax: m.hp || 250, face: 1, song: world.theme.song,
   };
   for (const p of m.players) {
     const t = { ...p, x: 0, y: 0, dx: 0, dy: 0, da: 45, angle: 45, power: 60, w: 0, score: 0, taken: 0, moves: 4, inv: [], gone: false,
@@ -274,7 +279,9 @@ function startGame(m) {
     world.tanks.push(t);
   }
   applyState(m.state, true);
-  Sound.play('battle');
+  world.props = makeProps(world.theme, WW, m.state.tanks.map(t => t.x));
+  Sound.play(G.song);
+  toast('WELCOME TO ' + world.theme.name, 3000);
   show('draft');
   $('#draftInfo').textContent = 'SHUFFLING THE POWERS...';
   $('#draftGrid').innerHTML = ''; $('#draftHands').innerHTML = '';
@@ -519,6 +526,12 @@ function runEvent(W, e) {
     case 'boom':
       W.fx.push({ x: e.x, y: sy(e.y), r: Math.max(3, e.r), c: e.c, t0: now() });
       if (e.carve && e.r > 0) { carveH(W.H, e.x, e.y, e.r); W.dirty = true; }
+      W.props = W.props.filter(pr => {
+        const gy = W.disp[clamp(Math.floor(pr.x), 0, WW - 1)];
+        if (Math.hypot(pr.x - e.x, gy + 5 - e.y) > Math.max(e.r, 4) + 6) return true;
+        burst(W, pr.x, WH - gy - 5, pr.c, 18, 90); burst(W, pr.x, WH - gy - 5, OUT, 6, 70);
+        return false;
+      });
       burst(W, e.x, sy(e.y), '#8a5a32', Math.min(40, 6 + e.r), 60 + e.r * 3);
       burst(W, e.x, sy(e.y), e.c, Math.min(20, 4 + e.r / 2), 40 + e.r * 2);
       W.shake = Math.min(8, W.shake + e.r / 7);
@@ -570,7 +583,7 @@ function runEvent(W, e) {
 function burst(W, x, y, c, n, spd) {
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, v = spd * (0.3 + Math.random() * 0.7);
-    W.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - spd * 0.6, c, life: 0.5 + Math.random() * 0.7, s: Math.random() < 0.3 ? 2 : 1 });
+    W.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - spd * 0.6, c, life: 0.5 + Math.random() * 0.7, s: Math.random() < 0.25 ? 3 : Math.random() < 0.5 ? 2 : 1 });
   }
 }
 function floatText(W, text, x, y, color) { W.texts.push({ text, x, y, color, t0: now(), dur: 1400 }); }
@@ -807,9 +820,11 @@ cv.addEventListener('pointermove', e => { if (dragging && myTurn()) aimAt(e); })
 cv.addEventListener('pointerup', () => (dragging = false));
 
 // ------------------------------------------------------------------ rendering
-const terrCv = canvasOf(WW, WH), terrCtx = terrCv.getContext('2d');
-const terrImg = terrCtx.createImageData(WW, WH), terrPx = new Uint32Array(terrImg.data.buffer);
-let DIRT = null, lastWorld = null;
+const TW = WW * RES, TH = WH * RES;
+const terrCv = canvasOf(TW, TH), terrCtx = terrCv.getContext('2d');
+const terrImg = terrCtx.createImageData(TW, TH), terrPx = new Uint32Array(terrImg.data.buffer);
+const lastTop = new Int16Array(TW);
+let lastWorld = null, lastTheme = null;
 
 function stepWorld(W, dt) {
   // ground settles: dirt above a crater slides down rather than snapping
@@ -832,6 +847,7 @@ function stepWorld(W, dt) {
     const wt = G && W === G.world ? woodOf(p) : (p.woodT == null ? 1 : p.woodT);
     p.wood = (p.wood == null ? 1 : p.wood) + (wt - (p.wood == null ? 1 : p.wood)) * Math.min(1, dt * 1.2);
     p.recoil = Math.max(0, (p.recoil || 0) - dt * 3.5);
+    stepIdle(W, p);
   }
   for (const q of W.parts) { q.vy += 260 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
   W.parts = W.parts.filter(q => q.life > 0 && q.y < WH + 10);
@@ -848,14 +864,40 @@ function woodOf(p) {
   return health * (1 - 0.6 * clamp(behind / 120, 0, 1));
 }
 
+// idle fidgets: every few seconds a dong that isn't busy does a random little routine
+function stepIdle(W, p) {
+  const t = now();
+  const busy = Math.abs(p.dx - p.x) > 0.5 || p.flash > t || (G && W === G.world && G.cur === p.id && G.phase !== 'over')
+    || (demo.proj && demo.proj.me === p);
+  if (busy) { p.idle = null; if (!p.idleNext || p.idleNext < t + 1200) p.idleNext = t + 1200 + Math.random() * 2500; return; }
+  if (p.idle) {
+    if (t - p.idle.t0 > IDLES[p.idle.k].dur) { p.idle = null; p.idleNext = t + 2500 + Math.random() * 6000; }
+    return;
+  }
+  if (!p.idleNext) p.idleNext = t + 800 + Math.random() * 4000;
+  if (t > p.idleNext) {
+    let k;
+    do k = IDLE_KINDS[(Math.random() * IDLE_KINDS.length) | 0]; while (k === p.lastIdle);
+    p.lastIdle = k; p.idle = { k, t0: t };
+  }
+}
+
+// terrain at canvas resolution: tufts above the surface, a dark rim, the theme's crust, then dirt.
+// Only columns whose surface moved get rewritten.
 function renderTerrain(W) {
-  if (!W.dirty && lastWorld === W) return;
-  W.dirty = false; lastWorld = W;
-  for (let x = 0; x < WW; x++) {
-    const top = WH - Math.round(W.disp[x]);
-    for (let y = 0; y < WH; y++) {
-      const i = y * WW + x, d = y - top;
-      terrPx[i] = d < 0 ? 0 : d < 3 ? CRUST[d] : DIRT[i];
+  const T = W.theme, full = lastWorld !== W || lastTheme !== T;
+  if (!W.dirty && !full) return;
+  W.dirty = false; lastWorld = W; lastTheme = T;
+  const crust = T.crust, cl = crust.length, dirt = T.dirt, out = T.out;
+  for (let cx = 0; cx < TW; cx++) {
+    const xw = (cx + 0.5) / RES - 0.5, i0 = clamp(Math.floor(xw), 0, WW - 1), i1 = Math.min(WW - 1, i0 + 1), f = clamp(xw - Math.floor(xw), 0, 1);
+    const top = Math.round((WH - (W.disp[i0] + (W.disp[i1] - W.disp[i0]) * f)) * RES);
+    if (!full && top === lastTop[cx]) continue;
+    lastTop[cx] = top;
+    const th = T.tuftH[cx], tc = T.tuftC[cx], dn = cl + T.drip[cx];
+    for (let y = 0; y < TH; y++) {
+      const d = y - top, i = y * TW + cx;
+      terrPx[i] = d < -th ? 0 : d < 0 ? tc : d === 0 ? out : d <= cl ? crust[d - 1] : d <= dn ? T.dripC : dirt[i];
     }
   }
   terrCtx.putImageData(terrImg, 0, 0);
@@ -865,22 +907,27 @@ function drawWorld(W, t, extra) {
   const sx = W.shake > 0.3 ? Math.round((Math.random() - 0.5) * W.shake) : 0;
   const sy = W.shake > 0.3 ? Math.round((Math.random() - 0.5) * W.shake) : 0;
   g.save(); g.translate(sx, sy);
-  drawBackground(g, WW, WH, t, 0);
+  drawBackground(W.theme, WW, WH, t);
   renderTerrain(W);
-  g.drawImage(terrCv, 0, 0);
+  g.drawImage(terrCv, 0, 0, WW, WH);
+  for (const pr of W.props) {
+    const gy = WH - W.disp[clamp(Math.floor(pr.x), 0, WW - 1)], img = pr.flip ? flipped(pr.img) : pr.img;
+    blit(img, pr.x - img.width * U / 2, gy - (img.height - pr.sink) * U);
+  }
   // air strike markers
   W.marks = W.marks.filter(m => t - m.t0 < 900);
   for (const m of W.marks) {
     const k = (t - m.t0) / 900, gy = WH - W.disp[clamp(Math.floor(m.x), 0, WW - 1)];
-    g.fillStyle = ((t / 80) | 0) % 2 ? '#ff5a4a' : '#ffd84a';
-    for (let y = gy - 6; y > 0; y -= 6) if (Math.random() > k) g.fillRect(Math.round(m.x), y, 1, 3);
-    disk(m.x, gy - 2, 2, '#ff5a4a');
+    const mc = ((t / 80) | 0) % 2 ? '#ff5a4a' : '#ffd84a';
+    for (let y = gy - 6; y > 0; y -= 5) if (Math.random() > k) px(m.x - U / 2, y, 1, 5, mc);
+    disk(m.x, gy - 2, 2.5, OUT); disk(m.x, gy - 2, 2, '#ff5a4a'); disk(m.x, gy - 2, 1, '#ffd84a');
   }
   for (const p of W.tanks) {
     if (p.gone) continue;
     const ch = G && W === G.world ? chargeOf(p) / 100 : 0;
     p.tip = drawTank(p.dx, WH - p.dy, p.da, p.color, t, {
-      flash: p.flash > t, roll: p.roll, erect: p.wood, face: G && W === G.world && p.id === App.myId && G.cur === p.id ? G.face : 0, recoil: p.recoil, charge: ch, moving: Math.abs(p.dx - p.x) > 0.5,
+      flash: p.flash > t, walk: p.roll, erect: p.wood,
+      idle: p.idle ? { k: p.idle.k, p: clamp((t - p.idle.t0) / IDLES[p.idle.k].dur, 0, 1) } : null, face: G && W === G.world && p.id === App.myId && G.cur === p.id ? G.face : 0, recoil: p.recoil, charge: ch, moving: Math.abs(p.dx - p.x) > 0.5,
     });
   }
   if (extra) extra(t);
@@ -889,11 +936,14 @@ function drawWorld(W, t, extra) {
   for (const f of W.fires) {
     const k = (t - f.t0) / f.dur;
     for (const x of f.xs) {
-      const gy = WH - Math.round(W.disp[clamp(x, 0, WW - 1)]);
-      const h = Math.round((3 + ((x * 7 + (t / 70 | 0)) % 5)) * (1 - k * 0.7));
-      g.fillStyle = OUT; g.fillRect(x - 1, gy - h - 1, 4, h + 1);
-      g.fillStyle = f.c; g.fillRect(x, gy - h, 2, h);
-      g.fillStyle = '#ffd84a'; g.fillRect(x, gy - Math.ceil(h / 2), 2, Math.ceil(h / 2));
+      const gy = WH - W.disp[clamp(x, 0, WW - 1)];
+      for (let j = 0; j < RES * 2; j++) {   // two world px of flame per burning column, one canvas px per tongue
+        const cx = x * RES + j - 1, h = Math.round((6 + ((cx * 7 + (t / 60 | 0)) % 10)) * (1 - k * 0.7)), X = x + (j - 1) * U;
+        px(X, gy - (h + 1) * U, 1, h + 1, OUT);
+        px(X, gy - h * U, 1, h, f.c);
+        px(X, gy - Math.ceil(h * 0.6) * U, 1, Math.ceil(h * 0.6), '#ff9a1f');
+        px(X, gy - Math.ceil(h * 0.3) * U, 1, Math.ceil(h * 0.3), '#ffd84a');
+      }
     }
   }
   // explosions
@@ -908,7 +958,7 @@ function drawWorld(W, t, extra) {
     disk(f.x, f.y, R * 0.2 * (1 - k), '#ffffff');
     g.globalAlpha = 1;
   }
-  for (const q of W.parts) { g.fillStyle = q.c; g.fillRect(Math.round(q.x), Math.round(q.y), q.s, q.s); }
+  for (const q of W.parts) px(q.x, q.y, q.s, q.s, q.c);
   W.texts = W.texts.filter(x => t - x.t0 < x.dur);
   for (const x of W.texts) {
     const k = (t - x.t0) / x.dur;
@@ -934,23 +984,23 @@ function drawProjectiles(t) {
   const rt = (t - R.t0) / 1000;
   for (const P of R.projs) {
     if (rt < P.t0 || rt > P.te) continue;
-    const [x, y] = projPos(P, rt), [px, py] = projPos(P, Math.max(P.t0, rt - 0.02));
+    const [x, y] = projPos(P, rt), [qx, qy] = projPos(P, Math.max(P.t0, rt - 0.02));
     // trail
     for (let k = 4; k >= 1; k--) {
       const tt = rt - k * 0.03;
       if (tt < P.t0) continue;
       const [tx, ty] = projPos(P, tt);
-      g.fillStyle = P.c; g.globalAlpha = 0.5 - k * 0.1;
-      g.fillRect(Math.round(tx), Math.round(WH - ty), k < 3 ? 2 : 1, k < 3 ? 2 : 1);
+      g.globalAlpha = 0.55 - k * 0.1;
+      px(tx - U, WH - ty - U, k < 3 ? 3 : 2, k < 3 ? 3 : 2, P.c);
     }
     g.globalAlpha = 1;
     if (WH - y < -2) {   // above the top of the screen: show a marker
-      const ax = Math.round(clamp(x, 3, WW - 4));
-      g.fillStyle = OUT; g.fillRect(ax - 2, 0, 5, 4);
-      g.fillStyle = P.c; g.fillRect(ax - 1, 1, 3, 1); g.fillRect(ax, 2, 1, 1);
+      const ax = clamp(x, 4, WW - 5);
+      for (let r = 0; r < 6; r++) px(ax - (11 - 2 * r) * U / 2, r * U, 11 - 2 * r, 1, OUT);
+      for (let r = 0; r < 4; r++) px(ax - (7 - 2 * r) * U / 2, (r + 1) * U, 7 - 2 * r, 1, P.c);
       continue;
     }
-    drawProjectile(P.look, x, WH - y, x - px, -(y - py), P.s, P.c, t);
+    drawProjectile(P.look, x, WH - y, x - qx, -(y - qy), P.s, P.c, t);
   }
 }
 
@@ -960,40 +1010,42 @@ function drawGameOverlay(t) {
     if (p.gone) continue;
     const sx = Math.round(p.dx), sy = Math.round(WH - p.dy);
     pixText(p.name, sx, sy - 46, css(p), { align: 'center' });
-    const hp = clamp(1 - p.taken / G.hpMax, 0, 1), bw = 22, fill = Math.round(bw * hp);
-    g.fillStyle = OUT; g.fillRect(sx - bw / 2 - 1, sy - 39, bw + 2, 4);
-    g.fillStyle = '#3a1418'; g.fillRect(sx - bw / 2, sy - 38, bw, 2);
-    g.fillStyle = hp > 0.6 ? '#5ae86a' : hp > 0.3 ? '#ffd84a' : '#ff5a4a'; g.fillRect(sx - bw / 2, sy - 38, fill, 2);
+    const hp = clamp(1 - p.taken / G.hpMax, 0, 1), bw = 44, fill = Math.round(bw * hp), bx = sx - bw * U / 2, by = sy - 39;
+    const hc = hp > 0.6 ? ['#5ae86a', '#b0ffb8', '#2a9a3a'] : hp > 0.3 ? ['#ffd84a', '#fff0a0', '#c89a1a'] : ['#ff5a4a', '#ffa090', '#a82a22'];
+    px(bx - U, by - U, bw + 2, 6, OUT);
+    px(bx, by, bw, 4, '#3a1418');
+    px(bx, by, fill, 4, hc[0]); px(bx, by, fill, 1, hc[1]); px(bx, by + 3 * U, fill, 1, hc[2]);
+    for (let k = 11; k < bw; k += 11) px(bx + k * U, by, 1, 4, OUT);
     if (G.cur === p.id && G.phase !== 'anim') {
-      const by = sy - 58 + Math.round(Math.sin(t / 150) * 2);
-      g.fillStyle = OUT; g.fillRect(sx - 4, by - 1, 9, 2); g.fillRect(sx - 3, by + 1, 7, 2); g.fillRect(sx - 2, by + 3, 5, 1);
-      g.fillStyle = css(p); g.fillRect(sx - 3, by, 7, 1); g.fillRect(sx - 2, by + 1, 5, 1); g.fillRect(sx - 1, by + 2, 3, 1); g.fillRect(sx, by + 3, 1, 1);
+      const ay = sy - 60 + Math.sin(t / 150) * 2;
+      for (let r = 0; r < 8; r++) px(sx - (15 - 2 * r) * U / 2, ay + (r - 1) * U, 15 - 2 * r, 1, OUT);
+      for (let r = 0; r < 6; r++) px(sx - (11 - 2 * r) * U / 2, ay + r * U, 11 - 2 * r, 1, r < 1 ? '#fffbe8' : css(p));
     }
   }
   // the aiming player's crosshair + wind-up wedge (everyone sees it, like worms)
   const cur = G.cur && G.players.get(G.cur);
   if (cur && !cur.gone && (G.phase === 'aim' || G.phase === 'firing')) {
     const a = cur.angle * Math.PI / 180, ux = Math.cos(a), uy = -Math.sin(a);
-    const px = cur.dx, py = WH - (cur.dy + PHYS.pivot);
+    const pvx = cur.dx, pvy = WH - (cur.dy + PHYS.pivot);
     const lvl = chargeOf(cur) / 100;
     if (lvl > 0) {
       const L = 8 + lvl * (CROSS_D - 12);
-      for (let d = 8; d <= L; d += 1) disk(px + ux * d, py + uy * d, 1.4 + (d - 8) * 0.12, OUT);
-      for (let d = 8; d <= L; d += 1) {
+      for (let d = 8; d <= L; d += 0.5) disk(pvx + ux * d, pvy + uy * d, 1.4 + (d - 8) * 0.12, OUT);
+      for (let d = 8; d <= L; d += 0.5) {
         const f = (d - 8) / (CROSS_D - 12);
-        disk(px + ux * d, py + uy * d, 0.6 + (d - 8) * 0.12, f < 0.35 ? '#ffd84a' : f < 0.7 ? '#ff9a1f' : '#ff3a2a');
+        disk(pvx + ux * d, pvy + uy * d, 0.6 + (d - 8) * 0.12, f < 0.35 ? '#ffd84a' : f < 0.7 ? '#ff9a1f' : '#ff3a2a');
       }
     }
-    const cx = Math.round(px + ux * CROSS_D), cy = Math.round(py + uy * CROSS_D);
+    const cx = pvx + ux * CROSS_D, cy = pvy + uy * CROSS_D;
     const col = css(cur), pulse = ((t / 250) | 0) % 2;
-    const ring = (c, r) => {
-      g.fillStyle = c;
-      for (let i = 0; i < 16; i++) { const q = i / 16 * Math.PI * 2 + t / 900; g.fillRect(Math.round(cx + Math.cos(q) * r), Math.round(cy + Math.sin(q) * r), 1, 1); }
-    };
-    ring(OUT, 5); ring(OUT, 3); ring(pulse ? col : '#fffbe8', 4);
-    g.fillStyle = OUT; g.fillRect(cx - 8, cy - 1, 5, 3); g.fillRect(cx + 4, cy - 1, 5, 3); g.fillRect(cx - 1, cy - 8, 3, 5); g.fillRect(cx - 1, cy + 4, 3, 5);
-    g.fillStyle = col; g.fillRect(cx - 7, cy, 3, 1); g.fillRect(cx + 5, cy, 3, 1); g.fillRect(cx, cy - 7, 1, 3); g.fillRect(cx, cy + 5, 1, 3);
-    g.fillStyle = '#fffbe8'; g.fillRect(cx, cy, 1, 1);
+    const ring = (c, r, n) => { for (let i = 0; i < n; i++) { const q = i / n * Math.PI * 2; px(cx + Math.cos(q) * r, cy + Math.sin(q) * r, 1, 1, c); } };
+    ring(OUT, 5, 72); ring(OUT, 4, 64); ring(pulse ? col : '#fffbe8', 4.5, 72);
+    for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x0 = cx + ax * 6, y0 = cy + ay * 6;
+      px(x0 - (ax ? (ax > 0 ? U : 6 * U) : 1.5 * U), y0 - (ay ? (ay > 0 ? U : 6 * U) : 1.5 * U), ax ? 7 : 3, ay ? 7 : 3, OUT);
+      px(x0 - (ax ? (ax > 0 ? 0 : 5 * U) : 0.5 * U), y0 - (ay ? (ay > 0 ? 0 : 5 * U) : 0.5 * U), ax ? 5 : 1, ay ? 5 : 1, col);
+    }
+    px(cx - U, cy - U, 2, 2, '#fffbe8');
   }
   if (G.replay) drawProjectiles(t);
 }
@@ -1037,7 +1089,8 @@ function makeDemoTerrain() {
   return H;
 }
 function resetDemo() {
-  const W = makeWorld(makeDemoTerrain());
+  const W = makeWorld(makeDemoTerrain(), (Math.random() * THEMES.length) | 0, (Math.random() * 1e9) | 0);
+  W.props = makeProps(W.theme, WW, [110, 530]);
   [110, 530].forEach((x, i) => {
     const y = groundAt(W.H, x);
     W.tanks.push({ id: 'd' + i, name: '', color: i ? 1 : 0, x, dx: x, y, dy: y, angle: i ? 135 : 45, da: i ? 135 : 45, roll: 0, flash: 0 });
@@ -1101,7 +1154,5 @@ function frame(t) {
   }
 }
 
-buildBackground(WW, WH);
-DIRT = buildDirt(WW, WH);
 show('menu');
 requestAnimationFrame(frame);

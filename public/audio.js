@@ -52,7 +52,68 @@ const Sound = (() => {
         'B5 . A5 . F#5 . D#5 . E5 - - - . . . .',
       ]),
     },
+    // Ballsack Canyon: spaghetti-western gallop, whistled lead
+    desert: {
+      bpm: 150, swing: 0, root: [45, 45, 43, 40], kind: ['m', 'm', 'M', 'dom'],
+      kick: [0, 8], snare: [12], hat: 4, bass: 'gallop', arp: 'stab', lead: 'whistle',
+      melody: parseMelody([
+        'A4 . . E5 - - - . A5 - - . G5 . E5 .',
+        'D5 - - - - - . . E5 . D5 . C5 . B4 .',
+        'C5 - - B4 . A4 . . G4 - - - B4 . D5 .',
+        'E5 - - - - - - . . . . . G#4 . B4 .',
+        'A4 . . E5 - - - . A5 - - . B5 . C6 .',
+        'B5 - - A5 . G5 . . A5 - - . E5 . . .',
+        'F5 - - E5 . D5 . . C5 . B4 . A4 . G#4 .',
+        'A4 - - - - - - - . . . . . . . .',
+      ]),
+    },
+    // Sewer Sludge: creepy minor stomp
+    toxic: {
+      bpm: 138, swing: 0.1, root: [40, 40, 36, 38], kind: ['m', 'm', 'M', 'M'],
+      kick: [0, 3, 6, 10], snare: [4, 12], hat: 2, bass: 'octave', arp: 'run', lead: 'p12',
+      melody: parseMelody([
+        'E5 . . G5 . . F#5 . E5 . . . B4 . . .',
+        'E5 . G5 . A5 . A#5 . B5 - - . A5 . G5 .',
+        'E5 . . G5 . . F#5 . E5 . . . C5 . . .',
+        'D5 . E5 . F#5 . G5 . F#5 - - - D5 . . .',
+        'B5 . . B5 . A5 G5 . A5 . . . E5 . . .',
+        'G5 . F#5 . E5 . D5 . E5 - - . B4 . . .',
+        'C5 . E5 . G5 . C6 . B5 - - . G5 . . .',
+        'A5 . G5 . F#5 . D5 . E5 - - - - - . .',
+      ]),
+    },
+    // Shrinkage Peaks: sparkly music-box waltz on ice
+    frozen: {
+      bpm: 104, swing: 0, root: [50, 47, 43, 45], kind: ['M', 'm', 'M', 'M'],
+      kick: [0], snare: [8], hat: 4, bass: 'oompah', arp: 'chime', lead: 'p12',
+      melody: parseMelody([
+        'F#5 . A5 . D6 . . . C#6 . A5 . . . E5 .',
+        'F#5 - - - D5 . . . B4 . D5 . F#5 . B5 .',
+        'G5 . B5 . D6 . . . B5 . G5 . . . D5 .',
+        'E5 - - - - - . . C#5 . E5 . A5 . . .',
+        'F#5 . A5 . D6 . E6 . F#6 - - . E6 . D6 .',
+        'D6 . C#6 . B5 . . . F#5 - - . B5 . . .',
+        'B5 . A5 . G5 . . . D5 . E5 . G5 . B5 .',
+        'A5 - - . G5 . E5 . D5 - - - - - . .',
+      ]),
+    },
+    // The Strip District: sleazy four-on-the-floor disco
+    neon: {
+      bpm: 122, swing: 0, root: [45, 50, 43, 48], kind: ['m', 'm', 'M', 'M'],
+      kick: [0, 4, 8, 12], snare: [4, 12], hat: 2, openHat: true, bass: 'octave', arp: 'run', lead: 'p25',
+      melody: parseMelody([
+        'A5 . . A5 . C6 . A5 . . G5 . . E5 . .',
+        'A5 . . A5 . C6 . D6 . C6 . A5 . . . .',
+        'D6 . . D6 . C6 . A5 . . F5 . . A5 . .',
+        'G5 - - - - - . . E5 . G5 . A5 . . .',
+        'B5 . . B5 . D6 . B5 . . G5 . . D5 . .',
+        'G5 . A5 . B5 . D6 . E6 - - . D6 . . .',
+        'C6 . . C6 . E6 . C6 . . G5 . . E5 . .',
+        'G5 - - . E5 . C5 . A4 - - - . . . .',
+      ]),
+    },
   };
+  for (const [k, S] of Object.entries(SONGS)) if (S.melody.length !== 128) console.warn('song', k, 'has', S.melody.length, 'steps');
   const CHORD = { M: [0, 4, 7, 12], m: [0, 3, 7, 12], dom: [0, 4, 7, 10] };
   const FUNK = { 0: 0, 3: 12, 6: 0, 7: 10, 10: 0, 12: 12, 14: 7, 15: 10 };
 
@@ -124,14 +185,23 @@ const Sound = (() => {
     const pos = s % 16, bar = Math.floor(s / 16) % 4;
     const root = S.root[bar], ch = CHORD[S.kind[bar]];
     const mel = S.melody[s % S.melody.length];
-    if (mel) tone(t, hz(mel.m), mel.len * sixteenth * 0.95, { wave: 'p25', gain: 0.17, dest: musicBus, vib: mel.len >= 3, release: 0.04 });
+    if (mel) {
+      if (S.lead === 'whistle') tone(t, hz(mel.m), mel.len * sixteenth * 0.95, { wave: 'sine', gain: 0.2, dest: musicBus, vib: true, attack: 0.03, release: 0.06 });
+      else tone(t, hz(mel.m), mel.len * sixteenth * 0.95, { wave: S.lead || 'p25', gain: 0.17, dest: musicBus, vib: mel.len >= 3, release: 0.04 });
+    }
     if (mel && mel.len <= 2) tone(t + sixteenth * 1.5, hz(mel.m), mel.len * sixteenth * 0.8, { wave: 'p12', gain: 0.05, dest: musicBus });
-    if (S.arp === 'stab') {
+    if (S.arp === 'chime') {
+      if (pos % 4 === 0) tone(t, hz(root + 24 + ch[(pos / 4) % 4]), sixteenth * 3, { wave: 'p12', gain: 0.05, dest: musicBus, release: 0.2, sustain: 0.4 });
+    } else if (S.arp === 'stab') {
       if (pos % 4 === 2) for (const n of ch.slice(0, 3)) tone(t, hz(root + 12 + n), sixteenth * 0.8, { wave: 'p25', gain: 0.045, dest: musicBus, release: 0.02 });
     } else tone(t, hz(root + 12 + ch[pos % 4]), sixteenth * 0.9, { wave: 'p12', gain: 0.05, dest: musicBus, release: 0.02 });
     if (S.bass === 'oompah') {
       if (pos % 8 === 0) tone(t, hz(root - 12), sixteenth * 1.6, { wave: 'p50', gain: 0.24, lp: 800, dest: musicBus });
       if (pos % 8 === 4) tone(t, hz(root - 5), sixteenth * 1.6, { wave: 'p50', gain: 0.2, lp: 800, dest: musicBus });
+    } else if (S.bass === 'gallop') {
+      if (pos % 4 !== 1) tone(t, hz(root - 12 + (pos % 8 >= 4 ? 7 : 0)), sixteenth * 0.7, { wave: 'p50', gain: 0.22, lp: 900, dest: musicBus });
+    } else if (S.bass === 'octave') {
+      if (pos % 2 === 0) tone(t, hz(root - 12 + (pos % 4 ? 12 : 0)), sixteenth * 0.9, { wave: 'sawtooth', gain: 0.2, lp: 900, dest: musicBus });
     } else if (FUNK[pos] !== undefined) {
       // slap bass: octave pops get a brighter, shorter pluck
       const pop = FUNK[pos] >= 10;
@@ -139,7 +209,7 @@ const Sound = (() => {
     }
     if (S.kick.includes(pos)) kick(t);
     if (S.snare.includes(pos)) snare(t);
-    if (pos % S.hat === 0) hat(t, pos === 14);
+    if (pos % S.hat === 0) hat(t, S.openHat ? pos % 4 === 2 : pos === 14);
   }
 
   function schedule() {
