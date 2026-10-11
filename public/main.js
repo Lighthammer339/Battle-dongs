@@ -100,7 +100,11 @@ function onMessage(m) {
       if (['menu', 'how', 'lobby'].includes(App.screen)) { show('room'); $('#chatLog').innerHTML = ''; }
       if (App.screen === 'room') renderRoom();
       break;
-    case 'left': App.room = null; show('lobby'); break;
+    case 'left':
+      App.room = null; G = null; closePause();
+      if (App.screen === 'bye') break;
+      if (App.toMenu) { App.toMenu = false; show('menu'); Sound.play('menu'); } else show('lobby');
+      break;
     case 'error': toast(m.msg.toUpperCase()); break;
     case 'chat': addChat(m); break;
     case 'gameStart': startGame(m); break;
@@ -110,11 +114,12 @@ function onMessage(m) {
     case 'moved': if (G) onMoved(m); break;
     case 'shot': if (G) onShot(m); break;
     case 'over': if (G) onOver(m); break;
+    case 'pause': if (G) onPause(m); break;
   }
 }
 
 // ------------------------------------------------------------------ screens
-const SCREENS = ['menu', 'how', 'lobby', 'room', 'draft', 'over'];
+const SCREENS = ['menu', 'how', 'lobby', 'room', 'draft', 'over', 'bye'];
 function show(name) {
   App.screen = name;
   SCREENS.forEach(s => ($('#' + s).hidden = s !== name));
@@ -133,6 +138,7 @@ document.addEventListener('click', e => { if (e.target.closest && e.target.close
 function updateMusicLabels() {
   $('#btnMusic').textContent = 'MUSIC: ' + (Sound.musicOn ? 'ON' : 'OFF');
   $('#muteBtn').classList.toggle('off', !Sound.musicOn);
+  $('#btnPauseMusic').textContent = 'MUSIC: ' + (Sound.musicOn ? 'ON' : 'OFF');
 }
 $('#btnMusic').onclick = $('#muteBtn').onclick = () => { Sound.init(); Sound.setMusic(!Sound.musicOn); updateMusicLabels(); };
 updateMusicLabels();
@@ -306,6 +312,7 @@ function statLine(s) {
     case 'roller': dmg(); bits.push(`ROLLS ${s.reach}PX`); break;
     case 'seeker': dmg(); bits.push(`HOMES ${s.reach}PX`); break;
     case 'jackhammer': dmg(); bits.push(`${s.count + 1} HITS`); break;
+    case 'teabag': dmg(); bits.push(`${s.count} SLAMS`); break;
     case 'bouncer': dmg(); bits.push(`${s.count} BOUNCES`); break;
     case 'spread': case 'stream': case 'split': dmg(); bits.push(`X${s.count}`); break;
     default: dmg();
@@ -352,6 +359,63 @@ function renderDraft() {
     hands.appendChild(d);
   }
 }
+
+// ---- ESC menu / pause
+const pausable = () => G && G.phase !== 'over' && (App.screen === 'game' || App.screen === 'draft');
+function openPause() {
+  if (App.screen === 'bye') return;
+  $('#pause').hidden = false;
+  $('#wList').hidden = true;
+  dragging = false;
+  $('#btnToMenu').hidden = App.screen === 'menu';
+  $('#btnResume').textContent = pausable() ? 'RESUME' : 'BACK';
+  if (pausable() && !G.paused) {
+    send({ t: 'pause', on: true });
+    $('#pauseTitle').textContent = 'PAUSED';
+    $('#pauseInfo').textContent = 'Game paused for everyone.';
+  } else if (!pausable()) {
+    $('#pauseTitle').textContent = 'MENU';
+    $('#pauseInfo').textContent = '';
+  }
+  updateMusicLabels();
+}
+function closePause() { $('#pause').hidden = true; }
+function resumeGame() {
+  if (G && G.paused) send({ t: 'pause', on: false });   // the server's echo closes everyone's menu
+  else closePause();
+}
+function onPause(m) {
+  if (m.on) {
+    G.paused = true; G.pausedAt = now();
+    openPause();
+    $('#pauseTitle').textContent = 'PAUSED';
+    $('#pauseInfo').textContent = m.id === App.myId ? 'Game paused for everyone.' : `${m.by.toUpperCase()} PAUSED THE GAME. Anyone can resume.`;
+  } else {
+    // restart the clocks from what the server says is left
+    if (m.ms != null) { if (G.phase === 'aim') G.deadline = now() + m.ms; else G.draftDeadline = now() + m.ms; }
+    else { const d = now() - G.pausedAt; G.deadline += d; G.draftDeadline += d; }
+    G.paused = false;
+    closePause();
+    if (m.id !== App.myId) toast(`${m.by.toUpperCase()} RESUMED`, 1500);
+  }
+}
+$('#btnResume').onclick = resumeGame;
+$('#btnPauseMusic').onclick = () => { Sound.init(); Sound.setMusic(!Sound.musicOn); updateMusicLabels(); };
+$('#btnToMenu').onclick = () => {
+  closePause();
+  if (App.room) { App.toMenu = true; send({ t: 'leave' }); }
+  else { G = null; show('menu'); Sound.play('menu'); }
+};
+$('#btnQuit').onclick = () => {
+  closePause();
+  if (App.room) send({ t: 'leave' });
+  G = null; App.room = null;
+  if (App.ws) { App.connected = false; setTimeout(() => App.ws && App.ws.close(), 150); }
+  Sound.stop();
+  show('bye');
+  window.close();   // only works if the browser allows it; otherwise the goodbye screen stays up
+};
+$('#btnAgain').onclick = () => location.reload();
 
 // ---- turns
 function onTurn(m) {
@@ -604,6 +668,8 @@ $('#btnFire').onclick = fire;
 $('#wName').onclick = () => { if (!myTurn()) return; $('#wList').hidden = !$('#wList').hidden; renderWList(); };
 
 addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.preventDefault(); $('#pause').hidden ? openPause() : resumeGame(); return; }
+  if (!$('#pause').hidden) return;
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 'm' || e.key === 'M') { Sound.init(); Sound.setMusic(!Sound.musicOn); updateMusicLabels(); return; }
   if (!G || App.screen !== 'game') return;
@@ -805,6 +871,7 @@ let hudTick = 0;
 function updateTimers(t) {
   if (t - hudTick < 200) return;
   hudTick = t;
+  if (G.paused) t = G.pausedAt;   // clocks freeze while paused
   if (App.screen === 'game' && G.phase === 'aim') {
     const s = Math.max(0, Math.ceil((G.deadline - t) / 1000));
     $('#turnTime').textContent = s;

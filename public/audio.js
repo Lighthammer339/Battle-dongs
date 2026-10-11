@@ -159,6 +159,8 @@ const Sound = (() => {
     clearInterval(timer); timer = setInterval(schedule, 25);
   }
 
+  function stop() { clearInterval(timer); timer = null; songName = null; }
+
   function setMusic(on) {
     musicOn = on;
     try { localStorage.setItem('battledongs.music', on ? '1' : '0'); } catch (e) {}
@@ -212,7 +214,7 @@ const Sound = (() => {
   };
 
   return {
-    init, play, setMusic,
+    init, play, stop, setMusic,
     get musicOn() { return musicOn; },
     sfx(name, a) { if (ctx && fx[name]) fx[name](a); },
   };

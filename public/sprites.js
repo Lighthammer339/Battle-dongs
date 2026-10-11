@@ -286,6 +286,17 @@ function drawProjectile(look, x, y, vx, vy, size, col, t) {
       g.drawImage(b, Math.round(x - b.width / 2), Math.round(y - b.height / 2));
       return;
     }
+    case 'nuts': {   // a big pair, jiggling as it flies
+      const bw = Math.max(4, Math.round(size * 0.72)), bh = Math.max(4, Math.round(size * 0.85));
+      const skin = mix(col, SKIN, 0.4), wob = Math.round(Math.sin(t / 90));
+      const L = getBall(bw, bh, skin), R = getBall(bw, bh + 1, skin);
+      const off = Math.round(bw * 0.42);
+      g.drawImage(L, Math.round(x - off - L.width / 2), Math.round(y - L.height / 2) + wob);
+      g.drawImage(R, Math.round(x + off - R.width / 2), Math.round(y - R.height / 2) - wob);
+      g.fillStyle = mix(skin, '#000000', 0.45);   // the seam
+      g.fillRect(Math.round(x), Math.round(y - bh / 2 + 1), 1, Math.max(2, bh - 3));
+      return;
+    }
     case 'rocket':
     case 'probe': {
       const len = look === 'rocket' ? 4 : 5;

@@ -40,7 +40,7 @@
       </ul>
       <h3>CONTROLS</h3>
       <p class="controls">LEFT / RIGHT = angle (hold SHIFT for x5) &middot; UP / DOWN = power<br>
-        W / S = switch power &middot; SPACE or ENTER = FIRE<br>
+        W / S = switch power &middot; SPACE or ENTER = FIRE &middot; ESC = pause / quit<br>
         Or click &amp; drag anywhere on the field to aim &middot; M = music</p>
       <p class="controls">Every power and what it does lives in <b class="c-yel">powers.txt</b> next to the server &mdash; edit it to make your own.</p>
       <button class="back">BACK</button>
@@ -151,6 +151,28 @@
       <div id="turnTime"></div>
     </div>
     <div id="wList" hidden></div>
+  </div>
+
+  <!-- QUIT -->
+  <section id="bye" class="screen" hidden>
+    <div class="panel narrow">
+      <h2>THANKS FOR PLAYING</h2>
+      <p class="controls">Pull your pants up. You can close this tab now.</p>
+      <button id="btnAgain" class="big">PLAY AGAIN</button>
+    </div>
+  </section>
+
+  <!-- ESC MENU -->
+  <div id="pause" hidden>
+    <div class="panel narrow">
+      <h2 id="pauseTitle">PAUSED</h2>
+      <p id="pauseInfo" class="controls"></p>
+      <button id="btnResume" class="big">RESUME</button>
+      <button id="btnPauseMusic">MUSIC: ON</button>
+      <button id="btnToMenu">LEAVE TO MAIN MENU</button>
+      <button id="btnQuit">QUIT GAME</button>
+      <p class="small">ESC = back to the action</p>
+    </div>
   </div>
 
   <div id="toast" hidden></div>

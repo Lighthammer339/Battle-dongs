@@ -28,8 +28,9 @@
 #  height       dirt walls only: wall height in pixels           (default 40)
 #  weight       how often it shows up in the draft, 0 = disabled (default 1)
 #  color        projectile + explosion color, like #ffd84a
-#  look         glob, ball, drop, pearl, rocket, dirt or probe   (default glob)
-#  size         projectile size in pixels                        (default 3)
+#  look         glob, ball, nuts, drop, pearl, rocket, dirt, probe (default glob)
+#               (nuts = a big pair of balls)
+#  size         projectile size in pixels, 1-16                  (default 3)
 #  description  the text players see
 #
 #  ---------------------------------------------------------------------------
@@ -44,6 +45,9 @@
 #              a wall or a tank, then explodes
 #  bouncer     bounces "count" times (a small frag pop each bounce), then explodes
 #  jackhammer  explodes, hops back up, explodes again - "count" hops
+#  teabag      like the Worms donkey: lands, slams, then floats slowly
+#              straight back up over the SAME spot and slams down again -
+#              "count" slams total, "frag_speed" = hop height
 #  digger      burrows "reach" px into the ground (radius = tunnel width);
 #              if damage > 0 it explodes at the end using frag_radius
 #  dirt        adds dirt instead of removing it: a ball, or a wall
@@ -321,15 +325,15 @@ color = #ff9a1f
 description = Hammers the same spot over and over and over and over...
 
 [Teabagger]
-type = jackhammer
-count = 2
-damage = 28
-radius = 16
-frag_speed = 80
-look = ball
-size = 4
+type = teabag
+count = 3
+damage = 22
+radius = 18
+frag_speed = 115
+look = nuts
+size = 16
 color = #e89a8a
-description = Dips its balls on the target. Twice. Incredibly rude.
+description = A huge pair of nuts lands on them, then slowly floats up and dunks down again. And again. Incredibly rude.
 
 [Heat-Seeking Missionary]
 type = seeker

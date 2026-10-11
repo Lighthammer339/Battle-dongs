@@ -42,6 +42,7 @@ VMAX = 410.0                   # launch speed at power 100
 DT = 1 / 120
 SAMPLE = 4                     # record a path point every 4 steps (30 per second)
 MAX_SHOT_SEC = 25
+TEABAG_GRAVITY = 0.4    # teabag hops float down slowly (multiplier of G)
 TANK_R = 8                     # hitbox radius around the tank's middle
 PIVOT = 12                     # barrel pivot height above the ground
 BARREL = 14
@@ -60,14 +61,14 @@ def clamp(v, a, b):
 
 # --------------------------------------------------------------------------- powers.txt
 
-TYPES = ("shot", "spread", "stream", "split", "cluster", "roller", "bouncer", "jackhammer",
+TYPES = ("shot", "spread", "stream", "split", "cluster", "roller", "bouncer", "jackhammer", "teabag",
          "digger", "dirt", "napalm", "seeker", "airstrike", "teleport")
-LOOKS = ("glob", "ball", "drop", "pearl", "rocket", "dirt", "probe")
+LOOKS = ("glob", "ball", "nuts", "drop", "pearl", "rocket", "dirt", "probe")
 NUM_KEYS = {   # key: (default, min, max)
     "damage": (30, 0, 500), "radius": (16, 0, 120), "count": (1, 1, 30), "spread": (6, 0, 90),
     "delay": (0.15, 0.02, 2), "jitter": (0, 0, 20), "reach": (100, 0, 640), "speed": (1, 0.2, 4),
     "gravity": (1, 0, 4), "frag_damage": (10, 0, 500), "frag_radius": (8, 0, 120),
-    "frag_speed": (150, 10, 600), "height": (40, 1, 250), "weight": (1, 0, 100), "size": (3, 1, 8),
+    "frag_speed": (150, 10, 600), "height": (40, 1, 250), "weight": (1, 0, 100), "size": (3, 1, 16),
 }
 STR_KEYS = {"type": "shot", "color": "#fffbe8", "look": "glob", "shape": "ball", "carve": "yes",
             "description": ""}
@@ -261,7 +262,7 @@ class Shot:
         else:
             if s["type"] == "seeker" and p["age"] > 0.35:
                 self.steer(p)
-            p["vy"] -= G * s["gravity"] * DT
+            p["vy"] -= G * (TEABAG_GRAVITY if p["mode"] == "hop" else s["gravity"]) * DT
             p["x"] += p["vx"] * DT
             p["y"] += p["vy"] * DT
             p["age"] += DT
@@ -276,7 +277,8 @@ class Shot:
 
     def collide(self, p):
         x, y = p["x"], p["y"]
-        tank = self.game.tank_at(x, y, skip=self.me if p["age"] < 0.25 else None)
+        rising_hop = p["mode"] == "hop" and p["vy"] > 0     # don't re-hit the tank we just left
+        tank = None if rising_hop else self.game.tank_at(x, y, skip=self.me if p["age"] < 0.25 else None)
         if tank:
             self.impact(p, tank)
         elif 0 <= x < WW and y <= self.H[int(x)]:
@@ -372,6 +374,22 @@ class Shot:
             p["vy"] = s["frag_speed"] * (0.55 + 0.45 * p["left"] / max(1, s["count"]))
             p["x"] = clamp(x, 0, WW - 1)
             p["y"] = max(y, self.H[int(p["x"])]) + 1
+            return
+
+        if typ == "teabag":
+            # donkey-bomb style: slam, then float straight back up over the same spot and slam again
+            if p["mode"] != "hop":
+                p["hx"] = clamp(x, 0, WW - 1)
+            self.explode(p["hx"], y, s["radius"], s["damage"], s["color"], s["carve"])
+            p["left"] -= 1
+            if p["left"] > 0:
+                p["mode"] = "hop"
+                p["x"], p["vx"] = p["hx"], 0.0
+                p["y"] = max(y, self.H[int(p["hx"])]) + 1
+                p["vy"] = s["frag_speed"]
+                self.emit("bounce", x=r1(p["x"]), y=r1(p["y"]))
+                return
+            self.finish(p)
             return
 
         if typ == "digger" and tank and s["damage"] > 0:
@@ -485,6 +503,10 @@ class Game:
         self.drafter = None
         self.pool, self.taken = [], []
         self.task = None
+        self.paused_by = None              # name of whoever hit ESC, or None
+        self.unpaused = asyncio.Event()
+        self.unpaused.set()
+        self.clock = None                  # (deadline-ish) seconds left on the running turn/draft timer
 
         members = list(room.members)
         n = len(members)
@@ -528,6 +550,44 @@ class Game:
             "H": [r1(h) for h in self.H],
         }
 
+    # ---- pause (ESC menu)
+    def set_pause(self, pid, on):
+        p = self.players.get(pid)
+        if not p or p["gone"] or p["bot"] or self.phase == "over":
+            return
+        if on and not self.paused_by:
+            self.paused_by = p["name"]
+            self.unpaused.clear()
+        elif not on and self.paused_by:
+            self.paused_by = None
+            self.unpaused.set()
+        else:
+            return
+        self.room.broadcast({"t": "pause", "on": bool(self.paused_by), "by": p["name"], "id": pid,
+                             "ms": int(self.clock * 1000) if self.clock is not None else None})
+
+    async def gate(self):
+        """Hold here while the game is paused."""
+        await self.unpaused.wait()
+
+    async def countdown(self, evt, secs):
+        """Like wait_for(evt.wait(), secs) but the clock stops while paused."""
+        self.clock = secs
+        try:
+            while self.clock > 0 and not evt.is_set():
+                if self.paused_by:
+                    await self.unpaused.wait()
+                    continue
+                t0 = time.monotonic()
+                try:
+                    await asyncio.wait_for(evt.wait(), timeout=min(self.clock, 0.2))
+                except asyncio.TimeoutError:
+                    pass
+                if not self.paused_by:
+                    self.clock -= time.monotonic() - t0
+        finally:
+            self.clock = None
+
     # ---- flow
     async def run(self):
         room = self.room
@@ -549,7 +609,9 @@ class Game:
                 k += 1
                 if p["gone"] or not p["inv"]:
                     continue
+                await self.gate()
                 await self.take_turn(p)
+            self.phase = "over"
             self.finish()
         except asyncio.CancelledError:
             pass
@@ -569,10 +631,7 @@ class Game:
         if p["bot"]:
             await self.bot_turn(p)
         else:
-            try:
-                await asyncio.wait_for(self.fired.wait(), timeout=self.room.turn_sec)
-            except asyncio.TimeoutError:
-                pass
+            await self.countdown(self.fired, self.room.turn_sec)
         if p["gone"] or not p["inv"]:
             self.current = None
             return
@@ -611,14 +670,12 @@ class Game:
                             "ms": DRAFT_SEC * 1000, "pick": k + 1, "total": total})
             if p["bot"]:
                 await asyncio.sleep(random.uniform(0.5, 1.1))
+                await self.gate()
                 idx = self.bot_pick()
             elif p["gone"]:
                 idx = None
             else:
-                try:
-                    await asyncio.wait_for(self.pick_evt.wait(), timeout=DRAFT_SEC)
-                except asyncio.TimeoutError:
-                    pass
+                await self.countdown(self.pick_evt, DRAFT_SEC)
                 idx = self.pick_idx
             free = [i for i, t in enumerate(self.taken) if t is None]
             if idx is None or idx not in free:
@@ -694,6 +751,8 @@ class Game:
     def forfeit(self, pid):
         p = self.players.get(pid)
         if p and not p["gone"]:
+            if self.paused_by == p["name"] or not [o for o in self.active() if not o["bot"] and o is not p]:
+                self.set_pause(pid, False)     # don't leave everyone stuck in a pause
             p["gone"] = True
             p["inv"] = []
             if self.current == pid:
@@ -723,7 +782,7 @@ class Game:
             if self.taken[i] is not None:
                 continue
             s = self.by_name.get(name, FALLBACK[0])
-            v = s["damage"] * (s["count"] if s["type"] in ("spread", "stream", "split", "jackhammer") else 1)
+            v = s["damage"] * (s["count"] if s["type"] in ("spread", "stream", "split", "jackhammer", "teabag") else 1)
             v += s["frag_damage"] * s["count"] * 0.6 if s["type"] in ("cluster", "airstrike") else 0
             v += 15 if s["type"] in ("dirt", "teleport", "digger") else 0
             v *= random.uniform(0.6, 1.4)
@@ -782,6 +841,9 @@ class Game:
         p["w"] = w
         self.room.broadcast({"t": "aim", "id": p["id"], "angle": ang, "power": power, "w": w})
         await asyncio.sleep(1.0)
+        await self.gate()
+        if p["gone"]:
+            return
         self.fire_req = {"angle": ang, "power": power, "w": w}
 
 
@@ -992,7 +1054,7 @@ class Client:
                 self.last_chat = now
                 me = next((m for m in room.members if m["id"] == self.id), None)
                 room.broadcast({"t": "chat", "name": self.name, "color": me["color"] if me else 0, "text": text})
-        elif t in ("aim", "fire", "move", "pick"):
+        elif t in ("aim", "fire", "move", "pick", "pause"):
             g = room.game
             if not g:
                 return
@@ -1004,6 +1066,8 @@ class Client:
                 g.move(self.id, msg.get("dir"))
             elif t == "pick":
                 g.pick(self.id, msg.get("i"))
+            elif t == "pause":
+                g.set_pause(self.id, bool(msg.get("on")))
         elif room.host != self.id or room.state != "lobby":
             return
         elif t == "addBot":

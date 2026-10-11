@@ -140,7 +140,16 @@ b { text-shadow: 1px 1px 0 #1a0b10; }
 .c-purple { color: #c87aff; }
 
 
+#pause {
+  position: absolute; inset: 0; z-index: 20; pointer-events: auto;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20,8,14,.72);
+}
+#pause .panel { gap: 10px; }
+#pause .small { margin: 0; text-align: center; opacity: .7; }
+
 #toast {
+  z-index: 30;
   position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%);
   background: #b2291f; border: 3px solid #ff9a7a; padding: 10px 14px; font-size: 10px;
   pointer-events: none; box-shadow: 4px 4px 0 #1a0b10;
