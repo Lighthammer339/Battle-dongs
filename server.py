@@ -292,7 +292,8 @@ class Shot:
             if math.hypot(c["x"] - x, c["y"] + 4 - y) < 7:
                 self.game.collect(c, self.me, self)
         rising_hop = p["mode"] == "hop" and p["vy"] > 0     # don't re-hit the tank we just left
-        tank = None if rising_hop else self.game.tank_at(x, y, skip=self.me if p["age"] < 0.25 else None)
+        tank = None if rising_hop else self.game.tank_at(x, y, skip=self.me if p["age"] < 0.25 else None,
+                                                         pr=max(0.6, p["spec"]["size"] * 0.4))
         if tank:
             self.impact(p, tank)
         elif 0 <= x < WW and y <= self.H[int(x)]:
@@ -467,10 +468,10 @@ class Shot:
                 self.game.collect(c, self.me, self)
         if dmg > 0:
             for tk in self.game.active():
-                d = math.hypot(x - tk["x"], y - (tk["y"] + 6))
-                reach = r + TANK_R
+                d = max(0.0, self.game.body_dist(tk, x, y))     # how far the blast is from any part of the dong
+                reach = r + 2
                 if d < reach:
-                    frac = 1 - max(0, d - 6) / max(1, reach - 6)
+                    frac = 1 - d / max(1, reach)
                     self.hurt(tk, round(dmg * (0.3 + 0.7 * clamp(frac, 0, 1))))
         self.game.settle()
 
@@ -639,11 +640,65 @@ class Game:
         else:
             self.room.broadcast({"t": "picked", **ev, "state": self.state()})
 
-    def tank_at(self, x, y, skip=None):
+    def tank_at(self, x, y, skip=None, pr=1.0):
         for p in self.active():
-            if p is not skip and math.hypot(x - p["x"], y - (p["y"] + 6)) < TANK_R:
+            if p is not skip and self.body_dist(p, x, y) < pr:
                 return p
         return None
+
+    # ---- hitbox = the dong's actual shape: both balls + neck as ellipses, the shaft as a chain of
+    # circles following the aim and its current droop, and the head. Mirrors drawTank() in sprites.js
+    # (rest pose, 1 world px = 1 canvas px), including the 1px outline.
+    def wood(self, p):
+        health = clamp(1 - p["taken"] / HP_MAX, 0, 1)
+        others = [o["score"] for o in self.active() if o is not p]
+        behind = max(0, max(others) - p["score"]) if others else 0
+        return clamp((health * (1 - 0.35 * clamp(behind / 150, 0, 1)) - 0.1) / 0.7, 0, 1)
+
+    def body(self, p):
+        e = self.wood(p)
+        key = (p["x"], p["y"], p["angle"], round(e, 2))
+        if p.get("_bk") == key:
+            return p["_body"]
+        x, gy, a = p["x"], p["y"], p["angle"]
+        face = -1 if math.cos(math.radians(a)) < -1e-6 else 1
+        sag = (1 - e) * 1.25
+        parts = []
+        for side, rx, ry0 in ((-1, 5.75, 5.25), (1, 6.25, 5.75)):        # back ball, front ball
+            ry = ry0 + sag
+            parts.append(("e", x + side * face * 5, gy + ry + 0.5, rx + 1, ry + 1))
+        parts.append(("e", x, gy + 11 - sag * 0.5, 4.5, 4))              # neck under the shaft
+        L, R0, limp = 10 + 7 * e, 2.2 + 0.6 * e, 1 - e
+        droop = (((-80 if face > 0 else 260) - a) % 360 + 540) % 360 - 180
+        theta = math.radians(a)
+        target = theta + math.radians(droop)
+        n = max(6, math.ceil(L / 0.75))
+        px, py, phi = x, gy + PIVOT, theta
+        for i in range(n + 1):
+            f = i / n
+            phi = theta + (target - theta) * min(1, limp * (0.25 + 0.85 * f ** 1.2))
+            parts.append(("c", px, py, R0 * (1 - 0.1 * f) + 1))
+            if i < n:
+                px += math.cos(phi) * L / n
+                py += math.sin(phi) * L / n
+        parts.append(("c", px + math.cos(phi) * 1.2, py + math.sin(phi) * 1.2, R0 * 1.3 + 1))   # the head
+        p["_bk"], p["_body"] = key, parts
+        return parts
+
+    def body_dist(self, p, x, y):
+        """Distance from (x, y) to the dong's surface; negative = inside it."""
+        if abs(x - p["x"]) > 40 or abs(y - p["y"] - 15) > 40:
+            return 99.0
+        best = 99.0
+        for part in self.body(p):
+            if part[0] == "c":
+                d = math.hypot(x - part[1], y - part[2]) - part[3]
+            else:
+                _, cx, cy, rx, ry = part
+                d = (math.hypot((x - cx) / rx, (y - cy) / ry) - 1) * min(rx, ry)
+            if d < best:
+                best = d
+        return best
 
     def muzzle(self, p, ang):
         a = math.radians(ang)

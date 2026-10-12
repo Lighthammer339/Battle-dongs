@@ -947,7 +947,8 @@ function woodOf(p) {
 // idle fidgets: every few seconds a dong that isn't busy does a random little routine
 function stepIdle(W, p) {
   const t = now();
-  const busy = p.dead || Math.abs(p.dx - p.x) > 0.5 || p.flash > t || (G && W === G.world && G.cur === p.id && G.phase !== 'over')
+  // no fidgeting while a shot is in the air, so what you see is exactly what can be hit
+  const busy = p.dead || Math.abs(p.dx - p.x) > 0.5 || p.flash > t || (G && W === G.world && (G.phase === 'anim' || G.phase === 'firing')) || (G && W === G.world && G.cur === p.id && G.phase !== 'over')
     || (demo.proj && demo.proj.me === p);
   if (busy) { p.idle = null; if (!p.idleNext || p.idleNext < t + 1200) p.idleNext = t + 1200 + Math.random() * 2500; return; }
   if (p.idle) {
